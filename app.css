@@ -37,7 +37,8 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .top{position:sticky;top:env(safe-area-inset-top,0px);z-index:30;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:saturate(1.4) blur(12px);-webkit-backdrop-filter:saturate(1.4) blur(12px);border-bottom:1px solid var(--line)}
 .bar{display:flex;align-items:center;gap:12px;padding-block:10px}
 .logo{display:flex;align-items:center;gap:9px;color:var(--ink);font-weight:650;letter-spacing:-.01em;white-space:nowrap;text-decoration:none!important}
-.logo .mark{width:30px;height:30px;border-radius:9px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font:700 17px/1 Georgia,"Times New Roman",serif}
+.logo .mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#123a5a,#1d5f78 55%,#2f8f8a);display:grid;place-items:center}
+.logo .mark svg{width:30px;height:30px;display:block}
 .logo .of{color:var(--mute);font-weight:500}
 .search{position:relative;flex:1;min-width:0}
 .search .sicon{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--faint);width:18px;height:18px;pointer-events:none}
