@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sanctum of Neurology</title>
+<meta name="description" content="Fast offline lexicon of neurological signs and diseases: definitions, illustrative cases and differentials.">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111418" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sanctum">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap bar">
+    <a class="logo" href="#/" aria-label="Sanctum of Neurology — home"><span class="mark" aria-hidden="true">S</span><span class="name">Sanctum<span class="of"> of Neurology</span></span></a>
+    <div class="search" role="search">
+      <svg class="sicon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+      <input id="q" type="search" placeholder="Search a sign, disease or findings…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search the lexicon">
+      <button class="clear" id="qclear" aria-label="Clear search" hidden>×</button>
+    </div>
+    <nav class="nav" aria-label="Sections">
+      <a href="#/" data-v="home" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span>Search</span></a>
+      <a href="#/browse/sys" data-v="browse"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg><span>Browse</span></a>
+      <a href="#/compare" data-v="compare"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M17 4v16M4 8h6M14 16h6"/></svg><span>Compare</span><i class="n"></i></a>
+      <a href="#/saved" data-v="saved"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16l-6-4-6 4z"/></svg><span>Saved</span><i class="n"></i></a>
+    </nav>
+    <a id="alarm" class="alarm" href="#/new" hidden title="New diseases or signs found in recent literature"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="txt">New entities!</span><b>0</b></a>
+    <a class="iconbtn" href="#/about" data-v="about" title="Settings, updates and sources" aria-label="Settings and about"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></a>
+  </div>
+</header>
+<div class="wrap"><div id="banner" class="banner" hidden></div></div>
+<main id="main" class="wrap"><p class="muted loading">Loading lexicon…</p></main>
+<script src="app.js"></script>
+</body>
+</html>
