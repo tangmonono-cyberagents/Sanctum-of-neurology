@@ -1,0 +1,24 @@
+{
+ "version": "2026.10.08-0311",
+ "built": "2026-10-08",
+ "files": {
+  "signs.json": "e6ecbc2e8dd4",
+  "diseases.json": "c49e8c03a627",
+  "similar.json": "e85d392c30e1",
+  "meta.json": "7dfc91daf18f",
+  "index.json": "1a4f512b9066"
+ },
+ "sizes": {
+  "signs.json": 526470,
+  "diseases.json": 2270485,
+  "similar.json": 800640,
+  "meta.json": 32877,
+  "index.json": 108507
+ },
+ "counts": {
+  "signs": 736,
+  "diseases": 2177,
+  "curatedSigns": 22,
+  "curatedDiseases": 145
+ }
+}
