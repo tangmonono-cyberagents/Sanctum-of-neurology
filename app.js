@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.8.2';
+const APP_VERSION = '0.11';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -234,6 +234,7 @@ function itemHTML(x, terms, sel) {
     <div class="sn">${terms ? snippet(e, terms) : esc((e.formal || '').slice(0, 200))}</div>${refLine(e)}</a></li>`;
 }
 function bookShort(r) { const b = D.meta.books[r.book] || {}; return b.short || b.title || r.book; }
+const statpearlsSearch = name => 'https://www.ncbi.nlm.nih.gov/books/?term=' + encodeURIComponent('statpearls[book] ' + name.replace(/\s*\([^)]*\)\s*$/, '').replace(/[’']s\b/g, ''));
 const safeUrl = u => /^https:\/\//.test(u || '') ? u : '';
 function refText(r) {   // "Book — where" with a clickable link when the reference is a web page
   const t = esc(bookShort(r)) + (r.where ? ' — ' + esc(r.where) : '');
@@ -242,12 +243,22 @@ function refText(r) {   // "Book — where" with a clickable link when the refer
 }
 const DET_DX = [['patho', 'Pathophysiology'], ['clinical', 'Clinical picture'], ['diagnosis', 'Diagnosis'], ['treatment', 'Treatment'], ['prognosis', 'Prognosis']];
 const DET_SIGN = [['mechanism', 'Mechanism'], ['technique', 'Technique'], ['interpretation', 'Interpretation']];
-function detHTML(d, parts, id) {
+const SRC_LEVEL = {strong: ['reviewed', 'Supported by your files'], partial: ['draft', 'Partly supported — more sources welcome'], none: ['auto', 'Not found in your files — please upload a source']};
+function srcHTML(m) {
+  if (!m) return '';
+  const [cls, lab] = SRC_LEVEL[m.level] || SRC_LEVEL.none;
+  const files = (m.files || []).map(f => `<li>${esc(bookShort({book: f.book}))}${f.chapter ? ' — ' + esc(f.chapter) : ''}${f.pdfpages ? ` <span class="faint">(PDF p. ${esc(f.pdfpages)})</span>` : ''}</li>`);
+  const web = (m.web || []).map(w => `<li>${refText(w)}</li>`);
+  return `<div class="srcbox"><div class="srch"><b>Sources for this summary</b> <span class="st ${cls}">${esc(lab)}</span></div>
+    ${files.length || web.length ? `<ul class="list small">${files.join('')}${web.join('')}</ul>` : ''}
+    <p class="small muted">Written by Claude in original wording and cross-checked against the sources above (nothing copied). ${m.level === 'none' ? 'None of your uploaded files cover this topic yet — the text relies on general medical knowledge.' : ''}</p></div>`;
+}
+function detHTML(d, parts, id, m) {
   if (!d) return '';
   return `<h2 class="sec" id="${id}">In depth <span class="st draft">draft</span></h2><div class="depth">
     ${d.thd ? `<div class="thd" lang="th">${esc(d.thd)}</div>` : ''}
     ${parts.filter(([k]) => d[k]).map(([k, l]) => `<h3>${l}</h3><p class="prose">${esc(d[k])}</p>`).join('')}
-    ${d.pearls && d.pearls.length ? `<h3>Pearls</h3><ul class="list pearls">${d.pearls.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>`;
+    ${d.pearls && d.pearls.length ? `<h3>Pearls</h3><ul class="list pearls">${d.pearls.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}${srcHTML(m)}</div>`;
 }
 function refLine(e) {
   const r = (e.read || [])[0];
@@ -365,6 +376,63 @@ function viewAdded(arg) {
     ${body || '<p class="empty">No additions recorded yet.</p>'}
     <div class="foot"><div>Content is draft until reviewed by a specialist. For education only — not a diagnostic tool.</div></div></article>`;
 }
+
+// ------------------------------------------------------------ flashcards & quiz from illustrative cases
+// Leitner boxes per case kept in this browser only: box 1 = see again soon … box 5 = known
+const QZ = {mode: LS.get('qzMode', 'cards'), sys: LS.get('qzSys', ''), cur: null, opts: null, done: false, n: 0, ok: 0};
+const qzBoxes = () => LS.get('qzBox', {});
+const qzDeck = () => D.dx.filter(d => d.cur && d.case && d.case.q && (!QZ.sys || (d.sys || []).includes(QZ.sys)));
+function qzPick() {
+  const deck = qzDeck(), box = qzBoxes(), now = Date.now();
+  if (!deck.length) return null;
+  const due = deck.filter(d => !box[d.id] || box[d.id].due <= now);
+  const pool = due.length ? due : deck;
+  const w = pool.map(d => 6 - ((box[d.id] || {}).b || 0));   // lower boxes come up more often
+  let r = Math.random() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < pool.length; i++) { r -= w[i]; if (r <= 0 && pool[i].id !== (QZ.cur || {}).id) return pool[i]; }
+  return pool[0];
+}
+function qzOptions(d) {
+  const ids = new Set([d.id]), out = [d];
+  const cand = [...(d.ddx || []).map(x => byId.get(x.id)), ...D.dx.filter(x => x.cur && x.id !== d.id && (x.sys || [])[0] === (d.sys || [])[0])].filter(Boolean);
+  for (const c of cand) { if (out.length >= 4) break; if (!ids.has(c.id)) { ids.add(c.id); out.push(c); } }
+  while (out.length < 4) { const x = D.dx[Math.floor(Math.random() * D.dx.length)]; if (x.cur && !ids.has(x.id)) { ids.add(x.id); out.push(x); } }
+  return out.sort(() => Math.random() - 0.5);
+}
+function qzGrade(id, good) {
+  const box = qzBoxes(), b = good ? Math.min(5, ((box[id] || {}).b || 0) + 1) : 1;
+  const days = [0, 0, 1, 3, 7, 21][b];
+  box[id] = {b, due: Date.now() + days * 864e5 - 6e4}; LS.set('qzBox', box);
+}
+function qzStats() { const box = qzBoxes(), deck = qzDeck(); const seen = deck.filter(d => box[d.id]).length, known = deck.filter(d => (box[d.id] || {}).b >= 4).length; return {total: deck.length, seen, known}; }
+function qzCase(c) {
+  return `<dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Examination</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>`;
+}
+function viewQuiz() {
+  if (!QZ.cur) { QZ.cur = qzPick(); QZ.opts = QZ.cur && qzOptions(QZ.cur); QZ.done = false; }
+  const d = QZ.cur, st = qzStats();
+  const groups = [...new Set(D.dx.filter(x => x.cur && x.case).map(x => (x.sys || [])[0]).filter(Boolean))].sort((a, b) => sysLabel(a).localeCompare(sysLabel(b)));
+  const head = `<div class="ehead"><div class="crumb">Learn from cases</div><h1>${QZ.mode === 'mcq' ? 'Case quiz' : 'Flashcards'}</h1>
+    <p class="muted">Invented teaching cases from the curated diseases. ${QZ.mode === 'mcq' ? 'Pick the diagnosis.' : 'Think of the diagnosis and the answer to the question, then reveal.'}</p></div>
+    <div class="qzbar"><div class="seg"><button data-qzmode="cards" class="${QZ.mode === 'cards' ? 'on' : ''}">Flashcards</button><button data-qzmode="mcq" class="${QZ.mode === 'mcq' ? 'on' : ''}">Quiz</button></div>
+    <label class="qzsel">Group <select id="qzsys"><option value="">All groups (${D.dx.filter(x => x.cur && x.case).length})</option>${groups.map(g => `<option value="${esc(g)}"${QZ.sys === g ? ' selected' : ''}>${esc(sysLabel(g))}</option>`).join('')}</select></label>
+    <span class="qzstat">${QZ.mode === 'mcq' && QZ.n ? `Score <b>${QZ.ok}/${QZ.n}</b> · ` : ''}${st.seen}/${st.total} seen · ${st.known} known</span></div>`;
+  if (!d) return `<article class="entry quiz">${head}<p class="empty">No cases in this group yet.</p></article>`;
+  const c = d.case;
+  const answer = `<div class="qzans"><div class="qzdx"><span class="muted small">Diagnosis</span><a href="${link(d)}"><b>${esc(d.name)}</b></a>${d.th ? `<div class="small" lang="th">${esc(d.th)}</div>` : ''}</div>
+    <div class="q">${esc(c.q)}</div><p class="a">${esc(c.a)}</p>${d.read && d.read.length ? `<div class="readmore"><span class="reftag">Read</span> ${d.read.map(refText).join('; ')}</div>` : ''}</div>`;
+  let body;
+  if (QZ.mode === 'mcq') {
+    body = `<div class="case">${qzCase(c)}<div class="q">What is the most likely diagnosis?</div>
+      <div class="qzopts">${QZ.opts.map(o => `<button class="qzopt${QZ.done ? (o.id === d.id ? ' right' : (o.id === QZ.picked ? ' wrong' : '')) : ''}" data-qzpick="${esc(o.id)}"${QZ.done ? ' disabled' : ''}>${esc(o.name)}</button>`).join('')}</div>
+      ${QZ.done ? answer + `<div class="qzact"><button class="btn primary" data-qznext>Next case</button></div>` : ''}</div>`;
+  } else {
+    body = `<div class="case">${qzCase(c)}<div class="q">${esc(c.q)}</div>
+      ${QZ.done ? answer + `<div class="qzact"><span class="muted small">How did you do?</span><button class="btn" data-qzgrade="0">Again</button><button class="btn primary" data-qzgrade="1">Got it</button></div>`
+        : `<div class="qzact"><button class="btn primary" data-qzshow>Show diagnosis &amp; answer</button><button class="btn" data-qznext>Skip</button></div>`}</div>`;
+  }
+  return `<article class="entry quiz">${head}${body}<div class="foot"><div>Progress is stored only on this device. For education only — not a diagnostic tool.</div></div></article>`;
+}
 // ------------------------------------------------------------ views
 function viewHome() {
   const cur = D.dx.filter(d => d.cur);
@@ -437,7 +505,7 @@ function viewSign(e) {
     ${jumpNav(nav)}
     ${e.exam ? `<h2 class="sec" id="s-exam">How to examine</h2><p class="prose">${esc(e.exam)}</p>` : ''}
     ${e.pos ? `<h2 class="sec" id="s-pos">What a positive result means</h2><p class="prose">${esc(e.pos)}</p>` : ''}
-    ${detHTML(e.det, DET_SIGN, 's-depth')}
+    ${detHTML(e.det, DET_SIGN, 's-depth', e.srcmap)}
     ${!e.exam && !e.pos ? `<p class="small muted" style="margin-top:14px">Examination steps and interpretation have not been written for this sign yet; the definition above includes the key finding.</p>` : ''}
     <h2 class="sec" id="s-loc">Localization ${autoChip(e, 'loc')}</h2>${axisHTML(e.loc, true)}
     <h2 class="sec" id="s-dx">Seen in <span class="count">${dx.length || ''}</span></h2>
@@ -458,7 +526,7 @@ function viewDx(e) {
   const ddx = (e.ddx || []).map(x => ({e: byId.get(x.id), pt: x.pt})).filter(x => x.e);
   const variants = (e.variants || []).map(id => byId.get(id)).filter(Boolean);
   const tempo = (e.tempo || []).join(' · ') || 'Not specified';
-  const nav = [['d-glance', 'At a glance'], e.feat && ['d-feat', 'Features'], (e.inv || e.more) && ['d-inv', 'Tests'], e.det && ['d-depth', 'In depth'], c && ['d-case', 'Case'], ['d-ddx', 'Differential'], ['d-sim', 'Similar'], ['d-signs', 'Signs'], e.read && e.read.length && ['d-read', 'Read']].filter(Boolean);
+  const nav = [['d-glance', 'At a glance'], e.feat && ['d-feat', 'Features'], (e.inv || e.more) && ['d-inv', 'Tests'], e.det && ['d-depth', 'In depth'], c && ['d-case', 'Case'], ['d-ddx', 'Differential'], ['d-sim', 'Similar'], ['d-signs', 'Signs'], ['d-read', 'Read']].filter(Boolean);
   return `<div class="entry"><div>${entryHead(e)}
     <div class="toolrow">${langSeg()}</div>${defText(e)}
     ${jumpNav(nav)}
@@ -471,7 +539,7 @@ function viewDx(e) {
     ${e.feat ? `<h2 class="sec" id="d-feat">Key features</h2><ul class="list">${e.feat.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
     ${e.inv ? `<h2 class="sec" id="d-inv">Key investigations</h2><ul class="list">${e.inv.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
     ${!e.inv && e.more ? `<h2 class="sec" id="d-inv">Investigations &amp; management notes</h2><p class="prose">${esc(e.more)}</p>` : ''}
-    ${detHTML(e.det, DET_DX, 'd-depth')}
+    ${detHTML(e.det, DET_DX, 'd-depth', e.srcmap)}
     ${c ? `<h2 class="sec" id="d-case">Illustrative case <span class="st draft">invented for teaching</span></h2>
       <div class="case"><dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Exam</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>
       <div class="q">${esc(c.q)}</div><button class="btn" data-reveal style="margin-top:10px">Show answer</button><div class="a" hidden>${esc(c.a)}</div>
@@ -482,7 +550,7 @@ function viewDx(e) {
     <h2 class="sec" id="d-signs">Signs linked to this disease</h2>
     ${signs.length ? `<div class="chips">${signs.map(s => `<a class="chip" href="${link(s)}">${esc(s.name)}</a>`).join('')}</div>` : '<p class="muted small">No linked signs yet.</p>'}
     ${e.more && e.inv ? `<details style="margin-top:22px"><summary class="more-toggle">Notes from Neuro Exam Assistant</summary><p class="prose small" style="margin-top:8px">${esc(e.more)}</p></details>` : ''}
-    ${e.read && e.read.length ? `<h2 class="sec" id="d-read">Read</h2><ul class="list small">${e.read.map(bookRef).join('')}</ul>` : ''}
+    <h2 class="sec" id="d-read">Read</h2>${e.read && e.read.length ? `<ul class="list small">${e.read.map(bookRef).join('')}</ul>` : ''}${(e.read || []).some(r => r.book === 'statpearls') ? '' : `<p class="small"><a href="${esc(statpearlsSearch(e.name))}" target="_blank" rel="noopener">Search StatPearls (NCBI Bookshelf) for this topic ↗</a></p>`}
     ${variants.length ? `<h2 class="sec">Other entries with this name</h2><div class="chips">${variants.map(v => `<a class="chip" href="${link(v)}">${esc(v.name)}</a>`).join('')}</div>` : ''}
     ${footer(e)}</div>${axisHTML(e.loc)}</div>`;
 }
@@ -663,6 +731,7 @@ function render() {
   else if (view === 'about') { html = viewAbout(); setTabs('about'); }
   else if (view === 'install') { html = viewInstall(); setTabs('about'); }
   else if (view === 'article') { html = viewArticle(arg); setTabs(''); }
+  else if (view === 'quiz') { html = viewQuiz(); setTabs('quiz'); }
   else if (view === 'added') { html = viewAdded(arg); setTabs(''); if (arg && arg !== 'all') after = () => { const el = document.getElementById(arg); if (el) el.scrollIntoView(); }; }
   else if (view === 'new') { html = '<p class="muted">Loading…</p>'; setTabs('new'); after = async () => { const h = await viewNew(); if (route().view === 'new') $('#main').innerHTML = h; }; }
   else html = viewHome();
@@ -738,6 +807,7 @@ function wire() {
   window.addEventListener('scroll', () => { scrollMemo.set(location.hash, window.scrollY); }, {passive: true});
   document.addEventListener('toggle', ev => { if (ev.target.closest && ev.target.closest('.summary')) LS.set('sumOpen', ev.target.open); }, true);
   window.addEventListener('hashchange', render);
+  document.addEventListener('change', ev => { if (ev.target.id === 'qzsys') { QZ.sys = ev.target.value; LS.set('qzSys', QZ.sys); QZ.cur = null; render(); } });
   document.addEventListener('click', async ev => {
     const t = ev.target.closest('button'); if (!t) return;
     const d = t.dataset;
@@ -757,6 +827,11 @@ function wire() {
     else if ('cmpclear' in d) { state.cmp = []; saveState(); render(); }
     else if ('cmpadd' in d) { if (!state.cmp.includes(d.cmpadd) && state.cmp.length < 4) state.cmp.push(d.cmpadd); saveState(); render(); const i = $('#cmpq'); if (i && !i.disabled) i.focus(); }
     else if (d.jump) { const el = document.getElementById(d.jump); if (el) window.scrollTo({top: el.getBoundingClientRect().top + window.scrollY - ($('.top').offsetHeight + 12), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }
+    else if (d.qzmode) { QZ.mode = d.qzmode; LS.set('qzMode', QZ.mode); QZ.cur = null; QZ.n = QZ.ok = 0; render(); }
+    else if ('qzshow' in d) { QZ.done = true; render(); }
+    else if ('qznext' in d) { QZ.cur = null; render(); window.scrollTo(0, 0); }
+    else if (d.qzgrade) { qzGrade(QZ.cur.id, d.qzgrade === '1'); QZ.cur = null; render(); window.scrollTo(0, 0); }
+    else if (d.qzpick) { if (!QZ.done) { QZ.done = true; QZ.picked = d.qzpick; QZ.n++; const ok = d.qzpick === QZ.cur.id; if (ok) QZ.ok++; qzGrade(QZ.cur.id, ok); render(); } }
     else if ('reveal' in d) { const a = t.nextElementSibling; a.hidden = !a.hidden; t.textContent = a.hidden ? 'Show answer' : 'Hide answer'; }
     else if (d.copy) { try { await navigator.clipboard.writeText(d.copy); toast('Copied'); } catch (e) { toast(d.copy); } }
     else if (d.browse) go('#/browse/' + d.browse);

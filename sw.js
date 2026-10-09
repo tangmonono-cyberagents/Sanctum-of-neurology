@@ -1,5 +1,5 @@
 // Sanctum of Neurology — offline service worker. Cache name changes with every build.
-const CACHE = 'sanctum-64ae185f4b';
+const CACHE = 'sanctum-c1f3cd30a5';
 const SHELL = ["./", "index.html", "app.css", "app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png", "data/version.json", "data/signs.json", "data/diseases.json", "data/meta.json", "data/index.json", "data/similar.json"];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
