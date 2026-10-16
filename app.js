@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.12';
+const APP_VERSION = '0.13';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -74,6 +74,8 @@ function prepare(data) {
     e._aj = ' ' + e._a.join(' | ') + ' ';
   }
   D.nea = new Map(D.dx.filter(d => d.nea != null).map(d => [d.nea, d]));
+  for (const d of D.dx) for (const k of d.neaAlt || []) D.nea.set(k, d);           // merged duplicates keep their NEA links
+  for (const [a, b] of Object.entries(D.meta.redirects || {})) if (byId.get(b)) byId.set(a, byId.get(b));   // old ids (saved, history, links)
   D.vocabSet = new Set(D.vocab);
   D.syn = new Map();
   for (const g of D.meta.syn) for (const t of g) D.syn.set(t, g);
@@ -157,7 +159,7 @@ function search(q, limit = 60) {
     if (!isCombo || full || tv.length > 1) {
       // whole-phrase bonus
       if (terms.length > 1) { if (e.nN === nq) total += 120; else if (e._n.includes(' ' + nq)) total += 60; else if (e._aj.includes(' ' + nq)) total += 50; }
-      if (e.cur) total += 4;
+      if (e.cur) total += e.bk ? 1 : 8;   // hand-curated core topics outrank bulk-written pages
       scored.push({e, s: total / tv.length + (full ? 40 : 0), full});
     }
   }
@@ -392,6 +394,22 @@ function qzPick() {
   for (let i = 0; i < pool.length; i++) { r -= w[i]; if (r <= 0 && pool[i].id !== (QZ.cur || {}).id) return pool[i]; }
   return pool[0];
 }
+const bdDeck = () => D.dx.filter(d => d.qx && (!QZ.sys || (d.sys || []).includes(QZ.sys))).flatMap(d => d.qx.map(x => ({d, x})));
+function bdPick() {
+  const deck = bdDeck(), box = qzBoxes(), now = Date.now();
+  if (!deck.length) return null;
+  const due = deck.filter(o => !box['q:' + o.x.id] || box['q:' + o.x.id].due <= now), pool = due.length ? due : deck;
+  const cand = pool.filter(o => !QZ.cur || o.x.id !== (QZ.cur.x || {}).id);
+  return (cand.length ? cand : pool)[Math.floor(Math.random() * (cand.length ? cand : pool).length)];
+}
+const LET = 'ABCDEF';
+function bdHTML(o, picked, done) {
+  const x = o.x;
+  return `<div class="case bd"><p class="prose">${esc(x.stem)}</p><div class="q">${esc(x.q)}</div>
+    <div class="qzopts">${x.opts.map((t, i) => `<button class="qzopt${done ? (i === x.ans ? ' right' : (i === picked ? ' wrong' : '')) : ''}" data-bdpick="${i}"${done ? ' disabled' : ''}><b>${LET[i]}.</b> ${esc(t)}</button>`).join('')}</div>
+    ${done ? `<div class="qzans"><div class="qzdx"><span class="muted small">Answer ${LET[x.ans]} · topic</span><a href="${link(o.d)}"><b>${esc(o.d.name)}</b></a></div><p class="a">${esc(x.why)}</p>${x.src ? `<div class="readmore"><span class="reftag">Read</span> ${refText(x.src)}</div>` : ''}</div>
+      <div class="qzact"><button class="btn primary" data-qznext>Next question</button></div>` : ''}</div>`;
+}
 function qzOptions(d) {
   const ids = new Set([d.id]), out = [d];
   const cand = [...(d.ddx || []).map(x => byId.get(x.id)), ...D.dx.filter(x => x.cur && x.id !== d.id && (x.sys || [])[0] === (d.sys || [])[0])].filter(Boolean);
@@ -409,15 +427,17 @@ function qzCase(c) {
   return `<dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Examination</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>`;
 }
 function viewQuiz() {
-  if (!QZ.cur) { QZ.cur = qzPick(); QZ.opts = QZ.cur && qzOptions(QZ.cur); QZ.done = false; }
-  const d = QZ.cur, st = qzStats();
+  const board = QZ.mode === 'board';
+  if (!QZ.cur) { QZ.cur = board ? bdPick() : qzPick(); QZ.opts = !board && QZ.cur && qzOptions(QZ.cur); QZ.done = false; QZ.picked = null; }
+  const d = QZ.cur, st = board ? (() => { const box = qzBoxes(), deck = bdDeck(); return {total: deck.length, seen: deck.filter(o => box['q:' + o.x.id]).length, known: deck.filter(o => (box['q:' + o.x.id] || {}).b >= 4).length}; })() : qzStats();
   const groups = [...new Set(D.dx.filter(x => x.cur && x.case).map(x => (x.sys || [])[0]).filter(Boolean))].sort((a, b) => sysLabel(a).localeCompare(sysLabel(b)));
-  const head = `<div class="ehead"><div class="crumb">Learn from cases</div><h1>${QZ.mode === 'mcq' ? 'Case quiz' : 'Flashcards'}</h1>
-    <p class="muted">Invented teaching cases from the curated diseases. ${QZ.mode === 'mcq' ? 'Pick the diagnosis.' : 'Think of the diagnosis and the answer to the question, then reveal.'}</p></div>
-    <div class="qzbar"><div class="seg"><button data-qzmode="cards" class="${QZ.mode === 'cards' ? 'on' : ''}">Flashcards</button><button data-qzmode="mcq" class="${QZ.mode === 'mcq' ? 'on' : ''}">Quiz</button></div>
+  const head = `<div class="ehead"><div class="crumb">Learn from cases</div><h1>${board ? 'Board-style questions' : QZ.mode === 'mcq' ? 'Case quiz' : 'Flashcards'}</h1>
+    <p class="muted">${board ? 'Invented board-style vignettes (single best answer), written for this app.' : 'Invented teaching cases from the curated diseases. ' + (QZ.mode === 'mcq' ? 'Pick the diagnosis.' : 'Think of the diagnosis and the answer to the question, then reveal.')}</p></div>
+    <div class="qzbar"><div class="seg"><button data-qzmode="cards" class="${QZ.mode === 'cards' ? 'on' : ''}">Flashcards</button><button data-qzmode="mcq" class="${QZ.mode === 'mcq' ? 'on' : ''}">Quiz</button><button data-qzmode="board" class="${board ? 'on' : ''}">Board MCQ</button></div>
     <label class="qzsel">Group <select id="qzsys"><option value="">All groups (${D.dx.filter(x => x.cur && x.case).length})</option>${groups.map(g => `<option value="${esc(g)}"${QZ.sys === g ? ' selected' : ''}>${esc(sysLabel(g))}</option>`).join('')}</select></label>
-    <span class="qzstat">${QZ.mode === 'mcq' && QZ.n ? `Score <b>${QZ.ok}/${QZ.n}</b> · ` : ''}${st.seen}/${st.total} seen · ${st.known} known</span></div>`;
-  if (!d) return `<article class="entry quiz">${head}<p class="empty">No cases in this group yet.</p></article>`;
+    <span class="qzstat">${QZ.mode !== 'cards' && QZ.n ? `Score <b>${QZ.ok}/${QZ.n}</b> · ` : ''}${st.seen}/${st.total} seen · ${st.known} known</span></div>`;
+  if (!d) return `<article class="entry quiz">${head}<p class="empty">${board ? 'No board-style questions in this group yet.' : 'No cases in this group yet.'}</p></article>`;
+  if (board) return `<article class="entry quiz">${head}${bdHTML(d, QZ.picked, QZ.done)}<div class="foot"><div>Progress is stored only on this device. For education only — not a diagnostic tool.</div></div></article>`;
   const c = d.case;
   const answer = `<div class="qzans"><div class="qzdx"><span class="muted small">Diagnosis</span><a href="${link(d)}"><b>${esc(d.name)}</b></a>${d.th ? `<div class="small" lang="th">${esc(d.th)}</div>` : ''}</div>
     <div class="q">${esc(c.q)}</div><p class="a">${esc(c.a)}</p>${d.read && d.read.length ? `<div class="readmore"><span class="reftag">Read</span> ${d.read.map(refText).join('; ')}</div>` : ''}</div>`;
@@ -526,7 +546,7 @@ function viewDx(e) {
   const ddx = (e.ddx || []).map(x => ({e: byId.get(x.id), pt: x.pt})).filter(x => x.e);
   const variants = (e.variants || []).map(id => byId.get(id)).filter(Boolean);
   const tempo = (e.tempo || []).join(' · ') || 'Not specified';
-  const nav = [['d-glance', 'At a glance'], e.feat && ['d-feat', 'Features'], (e.inv || e.more) && ['d-inv', 'Tests'], e.det && ['d-depth', 'In depth'], c && ['d-case', 'Case'], ['d-ddx', 'Differential'], ['d-sim', 'Similar'], ['d-signs', 'Signs'], ['d-read', 'Read']].filter(Boolean);
+  const nav = [['d-glance', 'At a glance'], e.feat && ['d-feat', 'Features'], (e.inv || e.more) && ['d-inv', 'Tests'], e.det && ['d-depth', 'In depth'], c && ['d-case', 'Case'], e.qx && e.qx.length && ['d-qx', 'Questions'], ['d-ddx', 'Differential'], ['d-sim', 'Similar'], ['d-signs', 'Signs'], ['d-read', 'Read']].filter(Boolean);
   return `<div class="entry"><div>${entryHead(e)}
     <div class="toolrow">${langSeg()}</div>${defText(e)}
     ${jumpNav(nav)}
@@ -544,6 +564,9 @@ function viewDx(e) {
       <div class="case"><dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Exam</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>
       <div class="q">${esc(c.q)}</div><button class="btn" data-reveal style="margin-top:10px">Show answer</button><div class="a" hidden>${esc(c.a)}</div>
       ${e.read && e.read.length ? `<div class="readmore"><span class="reftag">Read</span> ${e.read.map(refText).join('; ')}</div>` : ''}</div>` : ''}
+    ${e.qx && e.qx.length ? `<h2 class="sec" id="d-qx">Board-style questions <span class="st draft">invented for teaching</span></h2>
+      ${e.qx.map(x => `<div class="case bd"><p class="prose">${esc(x.stem)}</p><div class="q">${esc(x.q)}</div><ol class="opts" type="A">${x.opts.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
+      <button class="btn" data-reveal style="margin-top:6px">Show answer</button><div class="a" hidden><b>${LET[x.ans]}. ${esc(x.opts[x.ans])}</b> — ${esc(x.why)}</div></div>`).join('')}` : ''}
     <h2 class="sec" id="d-ddx">Differential — how to tell apart</h2>
     ${ddx.length ? `<ul class="ddx">${ddx.map(x => `<li><a href="${link(x.e)}">${esc(x.e.name)}</a><span class="pt">${esc(x.pt)}</span><button class="btn pair" data-pair="${esc(e.id)}|${esc(x.e.id)}" title="Compare side by side">${ICON.cmp}Compare</button></li>`).join('')}</ul>` : '<p class="small muted">No curated differential yet — see similar entries below.</p>'}
     <h2 class="sec" id="d-sim">Similar entries <span class="st auto">computed</span></h2><div id="simbox"><p class="small muted">Loading…</p></div>
@@ -831,6 +854,7 @@ function wire() {
     else if ('qzshow' in d) { QZ.done = true; render(); }
     else if ('qznext' in d) { QZ.cur = null; render(); window.scrollTo(0, 0); }
     else if (d.qzgrade) { qzGrade(QZ.cur.id, d.qzgrade === '1'); QZ.cur = null; render(); window.scrollTo(0, 0); }
+    else if (d.bdpick !== undefined && QZ.mode === 'board') { if (!QZ.done) { const i = +d.bdpick, ok = i === QZ.cur.x.ans; QZ.done = true; QZ.picked = i; QZ.n++; if (ok) QZ.ok++; qzGrade('q:' + QZ.cur.x.id, ok); render(); } }
     else if (d.qzpick) { if (!QZ.done) { QZ.done = true; QZ.picked = d.qzpick; QZ.n++; const ok = d.qzpick === QZ.cur.id; if (ok) QZ.ok++; qzGrade(QZ.cur.id, ok); render(); } }
     else if ('reveal' in d) { const a = t.nextElementSibling; a.hidden = !a.hidden; t.textContent = a.hidden ? 'Show answer' : 'Hide answer'; }
     else if (d.copy) { try { await navigator.clipboard.writeText(d.copy); toast('Copied'); } catch (e) { toast(d.copy); } }
@@ -1051,7 +1075,12 @@ async function boot() {
   render();
   if (!matchMedia('(hover:none)').matches && route().view === 'home') $('#q').focus();
   if ('serviceWorker' in navigator && /^https?:/.test(location.protocol) && !document.getElementById('inline-data')) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    const hadCtl = !!navigator.serviceWorker.controller; let reloaded = false;
+    navigator.serviceWorker.register('sw.js', {updateViaCache: 'none'}).then(reg => {
+      document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) reg.update().catch(() => {}); });
+    }).catch(() => {});
+    // a new app version took over: reload once so the new screens/buttons (e.g. Quiz tab) appear
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtl && !reloaded) { reloaded = true; location.reload(); } });
   }
   setTimeout(() => checkUpdate(false), 1500);
   refreshAlarm().then(() => { if (route().view === 'home') render(); }); setTimeout(() => sync.maybeAuto(), 3000);

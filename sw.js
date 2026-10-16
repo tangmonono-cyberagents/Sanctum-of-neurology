@@ -1,5 +1,5 @@
 // Sanctum of Neurology — offline service worker. Cache name changes with every build.
-const CACHE = 'sanctum-021f675800';
+const CACHE = 'sanctum-cfdd6ef7c2';
 const SHELL = ["./", "index.html", "app.css", "app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png", "data/version.json", "data/signs.json", "data/diseases.json", "data/meta.json", "data/index.json", "data/similar.json"];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
@@ -8,7 +8,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const r = e.request; if (r.method !== 'GET') return;
   const url = new URL(r.url); if (url.origin !== location.origin) return;
-  const fresh = r.mode === 'navigate' || url.pathname.endsWith('/version.json') || r.cache === 'no-store';
+  const fresh = r.mode === 'navigate' || /\/(version\.json|app\.js|app\.css|index\.html|manifest\.webmanifest)$/.test(url.pathname) || r.cache === 'no-store';   // app shell: network first so new features reach installed apps
   if (fresh) {   // network first, cached copy offline
     e.respondWith(fetch(r).then(res => { const c = res.clone(); caches.open(CACHE).then(x => x.put(r.mode === 'navigate' ? 'index.html' : r, c)); return res; })
       .catch(() => caches.match(r.mode === 'navigate' ? 'index.html' : r, {ignoreSearch: true})));
