@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.13';
+const APP_VERSION = '0.15';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -232,7 +232,7 @@ const sysLabel = c => (D.meta.sys[c] || c);
 function itemHTML(x, terms, sel) {
   const e = x.e || x;
   const kind = e.t === 'sign' ? 'sign' : (e.cat || 'disease');
-  return `<li><a class="item${sel ? ' sel' : ''}" href="${link(e)}" data-id="${esc(e.id)}"><div class="nm">${esc(e.name)} <span class="tag">${esc(kind)}</span>${e.cur ? '<span class="st cur">curated</span>' : ''}</div>
+  return `<li><a class="item${sel ? ' sel' : ''}" href="${link(e)}" data-id="${esc(e.id)}"><div class="nm">${stDot(e)}${esc(e.name)} <span class="tag">${esc(kind)}</span>${e.cur ? '<span class="st cur">curated</span>' : ''}</div>
     <div class="sn">${terms ? snippet(e, terms) : esc((e.formal || '').slice(0, 200))}</div>${refLine(e)}</a></li>`;
 }
 function bookShort(r) { const b = D.meta.books[r.book] || {}; return b.short || b.title || r.book; }
@@ -262,6 +262,11 @@ function detHTML(d, parts, id, m) {
     ${parts.filter(([k]) => d[k]).map(([k, l]) => `<h3>${l}</h3><p class="prose">${esc(d[k])}</p>`).join('')}
     ${d.pearls && d.pearls.length ? `<h3>Pearls</h3><ul class="list pearls">${d.pearls.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}${srcHTML(m)}</div>`;
 }
+// 🟢 / 🟡 data status (build.py: st = g | y)
+const ST_LABEL = {g: '🟢 ข้อมูลเชิงลึกแล้ว', y: '🟡 รอข้อมูลเพิ่มเติม'};
+const ST_TIP = {g: 'In-depth page backed by a source in the library', y: 'Waiting for a disease-specific monograph article'};
+const stBadge = e => e && e.t === 'dx' && e.st ? `<a class="st ds ${e.st}" href="#/browse/status/${e.st}" title="${ST_TIP[e.st]}">${ST_LABEL[e.st]}</a>` : '';
+const stDot = e => e && e.t === 'dx' && e.st ? `<span class="sdot ${e.st}" title="${ST_LABEL[e.st]}">${e.st === 'g' ? '🟢' : '🟡'}</span>` : '';
 function refLine(e) {
   const r = (e.read || [])[0];
   if (!r) return '';
@@ -468,6 +473,7 @@ function viewHome() {
     <p>Type a sign, a disease, an abbreviation or a few findings joined with “+”. Misspellings are fine.</p>
     <div class="tries">${['ptosis + fatigable', 'INO', 'CIDP', 'babinsky', 'thunderclap', 'แขนขาอ่อนแรง'].map(t => `<button data-try="${esc(t)}">${esc(t)}</button>`).join('')}</div></section>
   ${recentHomeHTML()}
+  <section class="card stcard"><h3>Data status</h3><p class="small" style="margin:0"><a href="#/browse/status/g">🟢 ข้อมูลเชิงลึกแล้ว <b>${D.dx.filter(d => d.st === 'g').length}</b></a> · <a href="#/browse/status/y">🟡 รอข้อมูลเพิ่มเติม <b>${D.dx.filter(d => d.st === 'y').length}</b></a> <span class="muted">— 🟡 pages are waiting for a disease-specific monograph article.</span></p></section>
   ${hist.length ? `<h2 class="sec">Recently opened</h2><div class="chips">${hist.map(e => `<a class="chip" href="${link(e)}">${esc(e.name)}</a>`).join('')}</div>` : ''}
   ${arts.length ? `<h2 class="sec">Clinical overviews <span class="count">${arts.length}</span></h2><div class="arts">${arts.map(a => `<a class="art" href="#/article/${esc(a.id)}"><b>${esc(a.title)}</b><span>${esc(a.body[0])}</span></a>`).join('')}</div>` : ''}
   <h2 class="sec">Curated diseases <span class="count">${cur.length}</span></h2>
@@ -505,7 +511,7 @@ function entryHead(e) {
   const group = e.t === 'dx' && e.sys && e.sys[0] ? ` · <a href="#/browse/sys/${e.sys[0]}">${esc(sysLabel(e.sys[0]))}</a>` : '';
   const ab = e.ab || [];
   const waiting = state.cmp.length === 1 && state.cmp[0] !== e.id ? byId.get(state.cmp[0]) : null;
-  return `<div class="ehead"><div class="crumb"><span>${kind}${group}</span>${e.cur ? '<span class="st cur">curated</span>' : ''}${statusChip(e)}</div>
+  return `<div class="ehead"><div class="crumb"><span>${kind}${group}</span>${e.cur ? '<span class="st cur">curated</span>' : ''}${statusChip(e)}${stBadge(e)}</div>
     <h1>${esc(e.name)}</h1>
     ${ab.length ? `<div class="aka">Also called ${ab.slice(0, 4).map(esc).join(' · ')}${ab.length > 4 ? ` <span class="faint">+${ab.length - 4}</span>` : ''}</div>` : ''}
     <div class="actions"><button class="btn${isFav(e.id) ? ' on' : ''}" data-fav="${esc(e.id)}">${isFav(e.id) ? ICON.starf + 'Saved' : ICON.star + 'Save'}</button>
@@ -538,7 +544,7 @@ function viewSign(e) {
 function bookRef(r) {
   const b = D.meta.books[r.book] || {title: r.book};
   const u = safeUrl(r.url);
-  return `<li><b>${esc(b.title)}</b>${b.edition ? `, ${esc(b.edition)}` : ''}${b.publisher ? `. ${esc(b.publisher)}` : ''}${r.where ? ` — ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(r.where)} ↗</a>` : esc(r.where)}` : ''}</li>`;
+  return `<li><b>${esc(b.title)}</b>${b.edition ? `, ${esc(b.edition)}` : ''}${b.publisher ? `. ${esc(b.publisher)}` : ''}${r.where ? ` — ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(r.where)} ↗</a>` : esc(r.where)}` : ''}${r.auto ? ' <span class="st auto" title="Found by scanning the books in the library">also covered</span>' : ''}</li>`;
 }
 function viewDx(e) {
   const signs = (e.signs || []).map(id => byId.get(id)).filter(Boolean);
@@ -554,6 +560,7 @@ function viewDx(e) {
     <dl class="glance">
       <dt>Tempo ${autoChip(e, 'tempo')}</dt><dd>${esc(tempo)}${e.tempoNote ? `<div class="small muted">${esc(e.tempoNote)}</div>` : ''}</dd>
       <dt>Localization ${autoChip(e, 'loc')}</dt><dd><div class="chips">${(e.loc || []).map(l => `<a class="chip" href="#/browse/loc/${l}">${esc(locLabel(l))}</a>`).join('') || '<span class="muted small">Not specified</span>'}</div></dd>
+      ${e.ichd ? `<dt>ICHD-3 (2018)</dt><dd><b>${esc(e.ichd.code)}</b> ${esc(e.ichd.title || '')}${/^A/.test(e.ichd.code) ? ' <span class="st auto">appendix</span>' : ''}${e.ichd.note ? `<div class="small muted">${esc(e.ichd.note)}</div>` : ''}</dd>` : ''}
       <dt>Group ${autoChip(e, 'sys')}</dt><dd><div class="chips">${(e.sys || []).map(s => `<a class="chip" href="#/browse/sys/${s}">${esc(sysLabel(s))}</a>`).join('')}</div></dd>
     </dl>
     ${e.feat ? `<h2 class="sec" id="d-feat">Key features</h2><ul class="list">${e.feat.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
@@ -627,11 +634,11 @@ function groupCounts(field) {
 }
 function viewBrowse(arg) {
   const [mode, key] = arg.split('/');
-  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['curated', 'Curated']];
+  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡']];
   const m = mode || 'sys';
   let body = '';
   const nav = `<div class="seg">${modes.map(([k, l]) => `<button data-browse="${k}" class="${m === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
-  const list = (arr) => `<ul class="plain">${arr.map(e => `<li><a href="${link(e)}">${esc(e.name)}</a>${e.cur ? '<span class="st cur">curated</span>' : ''}</li>`).join('')}</ul>`;
+  const list = (arr) => `<ul class="plain">${arr.map(e => `<li><a href="${link(e)}">${stDot(e)}${esc(e.name)}</a>${e.cur ? '<span class="st cur">curated</span>' : ''}</li>`).join('')}</ul>`;
   if ((m === 'sys' || m === 'loc' || m === 'tempo') && key) {
     const label = m === 'sys' ? sysLabel(key) : m === 'loc' ? locLabel(key) : key;
     const arr = D.dx.filter(d => (d[m] || []).includes(key)).sort((a, b) => (b.cur ? 1 : 0) - (a.cur ? 1 : 0) || a.name.localeCompare(b.name));
@@ -649,6 +656,14 @@ function viewBrowse(arg) {
     const letters = [...new Set(pool.map(first))].sort();
     const L = key && letters.includes(key) ? key : letters[0];
     body = `<div class="az">${letters.map(l => `<a href="#/browse/${m}/${l}" class="${l === L ? 'on' : ''}">${l}</a>`).join('')}</div>${list(pool.filter(e => first(e) === L).sort((a, b) => a.name.localeCompare(b.name)))}`;
+  } else if (m === 'status') {
+    const S = key === 'g' ? 'g' : 'y', arr = D.dx.filter(d => d.st === S);
+    const nG = D.dx.filter(d => d.st === 'g').length, nY = D.dx.filter(d => d.st === 'y').length;
+    const groups = new Map();
+    for (const d of arr) { const g = (d.sys || ['other'])[0]; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(d); }
+    body = `<div class="seg" style="margin:10px 0"><button data-go="#/browse/status/y" class="${S === 'y' ? 'on' : ''}">🟡 รอข้อมูลเพิ่มเติม (${nY})</button><button data-go="#/browse/status/g" class="${S === 'g' ? 'on' : ''}">🟢 ข้อมูลเชิงลึกแล้ว (${nG})</button></div>
+      <p class="small muted">${S === 'y' ? '🟡 = the in-depth page was written without a disease-specific source in the library. Add a monograph article for the disease to the “please update” folder and it will be enriched and turn 🟢.' : '🟢 = the in-depth page is backed by at least one source in the library (or was hand-curated with references).'}</p>
+      ${[...groups.entries()].sort((a, b) => sysLabel(a[0]).localeCompare(sysLabel(b[0]))).map(([g, l]) => `<h3 class="sec">${esc(sysLabel(g))} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('')}`;
   } else if (m === 'curated') {
     body = `<h2 class="sec">Curated diseases <span class="count">${D.dx.filter(d => d.cur).length}</span></h2>${list(D.dx.filter(d => d.cur).sort((a, b) => a.name.localeCompare(b.name)))}
       <h2 class="sec">Curated signs <span class="count">${D.signs.filter(d => d.cur).length}</span></h2>${list(D.signs.filter(d => d.cur).sort((a, b) => a.name.localeCompare(b.name)))}`;
@@ -850,6 +865,7 @@ function wire() {
     else if ('cmpclear' in d) { state.cmp = []; saveState(); render(); }
     else if ('cmpadd' in d) { if (!state.cmp.includes(d.cmpadd) && state.cmp.length < 4) state.cmp.push(d.cmpadd); saveState(); render(); const i = $('#cmpq'); if (i && !i.disabled) i.focus(); }
     else if (d.jump) { const el = document.getElementById(d.jump); if (el) window.scrollTo({top: el.getBoundingClientRect().top + window.scrollY - ($('.top').offsetHeight + 12), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }
+    else if (d.go) { go(d.go); }
     else if (d.qzmode) { QZ.mode = d.qzmode; LS.set('qzMode', QZ.mode); QZ.cur = null; QZ.n = QZ.ok = 0; render(); }
     else if ('qzshow' in d) { QZ.done = true; render(); }
     else if ('qznext' in d) { QZ.cur = null; render(); window.scrollTo(0, 0); }
