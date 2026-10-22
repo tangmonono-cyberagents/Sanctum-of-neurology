@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.17';
+const APP_VERSION = '0.26';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -51,7 +51,10 @@ async function loadBundled() {
   const el = document.getElementById('inline-data');
   if (el) return JSON.parse(el.textContent);
   const get = f => fetch('data/' + f).then(r => { if (!r.ok) throw new Error(f + ' ' + r.status); return r.json(); });
-  const [version, signs, dx, meta, index] = await Promise.all(['version.json', 'signs.json', 'diseases.json', 'meta.json', 'index.json'].map(get));
+  const version = await get('version.json');
+  // a hosting limit on file size can be met by listing version.dxParts (diseases split into several files)
+  const dxGet = version.dxParts ? Promise.all(version.dxParts.map(get)).then(p => [].concat(...p)) : get('diseases.json');
+  const [signs, dx, meta, index] = await Promise.all([get('signs.json'), dxGet, get('meta.json'), get('index.json')]);
   return {version, signs, dx, meta, vocab: index.vocab, similar: null};
 }
 function cmpVer(a, b) { return String(a || '').localeCompare(String(b || ''), 'en', {numeric: true}); }
@@ -133,7 +136,27 @@ function fieldScore(e, v) {
   if (!s && e._t && /[฀-๿]/.test(v) && e._t.includes(v)) s = 14;
   return s;
 }
+// Thai keyboard (Kedmanee) → QWERTY, for text typed with the wrong keyboard language
+const TH_KEYS = (() => {
+  const lo = 'ๅ/-ภถุึคตจขช' + 'ๆไำพะัีรนยบลฃ' + 'ฟหกดเ้่าสวง' + 'ผปแอิืทมใฝ';
+  const loK = '1234567890-=' + 'qwertyuiop[]\\' + "asdfghjkl;'" + 'zxcvbnm,./';
+  const hi = '+๑๒๓๔ู฿๕๖๗๘๙' + '๐"ฎฑธํ๊ณฯญฐ,ฅ' + 'ฤฆฏโฌ็๋ษศซ.' + '()ฉฮฺ์?ฒฬฦ';
+  const hiK = '!@#$%^&*()_+' + 'QWERTYUIOP{}|' + 'ASDFGHJKL:"' + 'ZXCVBNM<>?';
+  const m = {};
+  for (let i = 0; i < lo.length; i++) m[lo[i]] = loK[i];
+  for (let i = 0; i < hi.length; i++) if (!(hi[i] in m)) m[hi[i]] = hiK[i];
+  return m;
+})();
+function thaiToEn(v) { return [...v].map(c => TH_KEYS[c] || c).join(''); }
 function search(q, limit = 60) {
+  const r = searchCore(q, limit);
+  if (/[฀-๿]/.test(q) && !(r && (r.dx.length || r.signs.length))) {
+    const fixed = thaiToEn(q);
+    if (fixed !== q) { const r2 = searchCore(fixed, limit); if (r2 && (r2.dx.length || r2.signs.length)) { r2.fixedFrom = q; r2.fixed = fixed; return r2; } }
+  }
+  return r;
+}
+function searchCore(q, limit = 60) {
   const t0 = performance.now();
   const raw = q.trim();
   if (!raw) return null;
@@ -499,12 +522,13 @@ function viewResults(r) {
   const fixes = r.used.filter(u => !u.endsWith('(synonym)'));
   const dym = fixes.length ? `<p class="dym">Including spelling matches: ${fixes.map(u => esc(u.split('→')[1])).join(', ')}</p>` : '';
   if (!r.dx.length && r.signs.length) state.resTab = 'sign'; else if (r.dx.length && !r.signs.length) state.resTab = 'dx';
+  const kb = r.fixed ? `<p class="dym kbfix">Thai keyboard detected. Showing results for “<b>${esc(r.fixed)}</b>”. <span class="muted">Suggestions:</span> ${r.dx.concat(r.signs).slice(0, 5).map(x => `<a class="chip" href="${link(x.e)}">${esc(x.e.name)}</a>`).join(' ')}</p>` : '';
   const part = r.partial ? `<p class="dym muted">No entry matches every finding; showing entries that match some of them.</p>` : '';
   const col = (k, title, list) => `<section class="rescol${state.resTab === k ? ' show' : ''}"><h2 class="sec">${title} <span class="count">${list.length}</span></h2>
     ${list.length ? `<ul class="res">${list.slice(0, cap(list.length)).map(x => itemHTML(x, r.terms)).join('')}</ul>${list.length > 60 ? `<p class="small muted more">Showing 60 of ${list.length}. Add another word to narrow.</p>` : ''}` : '<p class="empty">No matches</p>'}</section>`;
   const tabs = `<div class="seg restabs"><button data-rt="dx" class="${state.resTab === 'dx' ? 'on' : ''}">Diseases ${r.dx.length}</button><button data-rt="sign" class="${state.resTab === 'sign' ? 'on' : ''}">Signs ${r.signs.length}</button></div>`;
   if (!r.dx.length && !r.signs.length) return `<div class="empty"><p><b>No match for “${esc(r.q)}”.</b></p><p class="small">Try fewer words, an abbreviation, or separate findings with “+”.</p></div>`;
-  return `${summaryPanel(r)}${dym}${part}${tabs}<div class="rescols one">${col('dx', 'Diseases', r.dx)}${col('sign', 'Signs', r.signs)}</div>`;
+  return `${kb}${summaryPanel(r)}${dym}${part}${tabs}<div class="rescols one">${col('dx', 'Diseases', r.dx)}${col('sign', 'Signs', r.signs)}</div>`;
 }
 function entryHead(e) {
   const kind = e.t === 'sign' ? 'Sign' : (e.cat ? e.cat.charAt(0).toUpperCase() + e.cat.slice(1) : 'Disease');
@@ -546,6 +570,27 @@ function bookRef(r) {
   const u = safeUrl(r.url);
   return `<li><b>${esc(b.title)}</b>${b.edition ? `, ${esc(b.edition)}` : ''}${b.publisher ? `. ${esc(b.publisher)}` : ''}${r.where ? ` — ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(r.where)} ↗</a>` : esc(r.where)}` : ''}${r.auto ? ' <span class="st auto" title="Found by scanning the books in the library">also covered</span>' : ''}</li>`;
 }
+
+// biomarker pages that a disease page mentions (by antibody short name) or that point to it
+let BM_KEYS = null;
+function bmKeys() {
+  if (BM_KEYS) return BM_KEYS;
+  const rx = k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  BM_KEYS = D.dx.filter(d => d.cat === 'biomarker').map(b => {
+    const core = b.name.replace(/^Anti-/, '').replace(/ antibod(y|ies).*$/, '').trim();
+    const ks = [...new Set([core, ...(b.ab || []).map(a => a.replace(/^anti-?/i, '').replace(/ antibody$/i, '').trim())])].filter(k => k.length >= 2 && k.length <= 24);
+    const strong = ks.filter(k => k.length >= 3 && (/\d/.test(k) || (k.match(/[A-Z]/g) || []).length >= 2) && !/\s/.test(k));
+    const reAnti = new RegExp('anti-?\\s?(' + ks.map(rx).join('|') + ')(?![A-Za-z0-9])', 'i');
+    const reStrong = strong.length ? new RegExp('(^|[^A-Za-z0-9-])(' + strong.map(rx).join('|') + ')(?![A-Za-z0-9])') : null;
+    return {b, test: t => reAnti.test(t) || (reStrong ? reStrong.test(t) : false)};
+  });
+  return BM_KEYS;
+}
+function bmFor(e) {
+  if (e.cat === 'biomarker') return [];
+  const txt = [e.formal, e.simple, ...(e.feat || []), ...(e.inv || []), e.more, e.det ? JSON.stringify(e.det) : ''].filter(Boolean).join(' \n ');
+  return bmKeys().filter(({test}) => test(txt)).map(x => x.b);
+}
 function viewDx(e) {
   const signs = (e.signs || []).map(id => byId.get(id)).filter(Boolean);
   const c = e.case;
@@ -566,6 +611,7 @@ function viewDx(e) {
     ${e.feat ? `<h2 class="sec" id="d-feat">Key features</h2><ul class="list">${e.feat.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
     ${e.inv ? `<h2 class="sec" id="d-inv">Key investigations</h2><ul class="list">${e.inv.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
     ${!e.inv && e.more ? `<h2 class="sec" id="d-inv">Investigations &amp; management notes</h2><p class="prose">${esc(e.more)}</p>` : ''}
+    ${(() => { const bm = bmFor(e); return bm.length ? `<h2 class="sec" id="d-bm">Antibody / biomarker pages <span class="count">${bm.length}</span></h2><div class="chips">${bm.map(b => `<a class="chip" href="${link(b)}">${esc(b.name)}</a>`).join('')}</div>` : ''; })()}
     ${detHTML(e.det, DET_DX, 'd-depth', e.srcmap)}
     ${c ? `<h2 class="sec" id="d-case">Illustrative case <span class="st draft">invented for teaching</span></h2>
       <div class="case"><dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Exam</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>
@@ -634,7 +680,7 @@ function groupCounts(field) {
 }
 function viewBrowse(arg) {
   const [mode, key] = arg.split('/');
-  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡']];
+  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['bm', 'Biomarkers'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡']];
   const m = mode || 'sys';
   let body = '';
   const nav = `<div class="seg">${modes.map(([k, l]) => `<button data-browse="${k}" class="${m === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
@@ -664,6 +710,13 @@ function viewBrowse(arg) {
     body = `<div class="seg" style="margin:10px 0"><button data-go="#/browse/status/y" class="${S === 'y' ? 'on' : ''}">🟡 รอข้อมูลเพิ่มเติม (${nY})</button><button data-go="#/browse/status/g" class="${S === 'g' ? 'on' : ''}">🟢 ข้อมูลเชิงลึกแล้ว (${nG})</button></div>
       <p class="small muted">${S === 'y' ? '🟡 = the in-depth page was written without a disease-specific source in the library. Add a monograph article for the disease to the “please update” folder and it will be enriched and turn 🟢.' : '🟢 = the in-depth page is backed by at least one source in the library (or was hand-curated with references).'}</p>
       ${[...groups.entries()].sort((a, b) => sysLabel(a[0]).localeCompare(sysLabel(b[0]))).map(([g, l]) => `<h3 class="sec">${esc(sysLabel(g))} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('')}`;
+  } else if (m === 'bm') {
+    const arr = D.dx.filter(d => d.cat === 'biomarker');
+    const grp = d => (d.sys || []).includes('myopathy') ? 'Myositis antibodies' : 'Neural antibodies (encephalitis and related)';
+    const groups = new Map();
+    for (const d of arr) { const g = grp(d); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(d); }
+    body = `<p class="small muted">One page per antibody: what it targets, the syndrome it marks, cancer and organ risks, and how it changes management.</p>
+      ${[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([g, l]) => `<h3 class="sec">${esc(g)} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('') || '<p class="empty">No biomarker pages yet.</p>'}`;
   } else if (m === 'curated') {
     body = `<h2 class="sec">Curated diseases <span class="count">${D.dx.filter(d => d.cur).length}</span></h2>${list(D.dx.filter(d => d.cur).sort((a, b) => a.name.localeCompare(b.name)))}
       <h2 class="sec">Curated signs <span class="count">${D.signs.filter(d => d.cur).length}</span></h2>${list(D.signs.filter(d => d.cur).sort((a, b) => a.name.localeCompare(b.name)))}`;
@@ -707,13 +760,6 @@ function viewAbout() {
   const v = D.version, b = D.meta.books;
   const last = sync.last();
   return `<h2 class="sec">Settings</h2><div class="settings">
-  <section class="card"><h3>Literature watch</h3><p class="small muted">Once a day when online, Sanctum checks recent PubMed titles (including AAN journals) and raises <b>New entities!</b> for disease or sign names that are not in the lexicon. Only fixed search terms leave the device.</p>
-    <div class="actions"><button class="btn${sync.enabled() ? ' on' : ''}" data-syncon>${sync.enabled() ? '✓ Daily check on' : 'Daily check off'}</button>
-    ${Object.entries(SYNC_SOURCES).map(([k, s]) => `<button class="btn${sync.sources().includes(k) ? ' on' : ''}" data-syncsrc="${k}">${sync.sources().includes(k) ? '✓ ' : ''}${s.label}</button>`).join('')}
-    <a class="btn primary" href="#/new">Open watch list${state.newCount ? ` (${state.newCount})` : ''}</a></div>
-    <p class="small muted" style="margin:10px 0 6px">${last ? 'Last checked ' + new Date(last).toLocaleString() : 'Not checked on this device yet.'}</p>
-    <div class="actions"><span class="small muted">Remind me to go online every</span><div class="seg">${[1, 3, 7, 14].map(n => `<button class="${remindDays() === n ? 'on' : ''}" data-remind="${n}">${n} day${n > 1 ? 's' : ''}</button>`).join('')}</div>
-    <button class="btn${LS.get('notify', false) ? ' on' : ''}" data-notifyon>${LS.get('notify', false) ? '✓ Desktop notifications' : 'Allow desktop notifications'}</button></div></section>
   <section class="card"><h3>Lexicon updates</h3><div class="form"><label for="src">Data source (folder with version.json)<input id="src" type="url" placeholder="https://example.org/sanctum/data/" value="${esc(state.source)}"></label>
     <div class="actions"><button class="btn primary" data-update>Check for updates</button><button class="btn ghost" data-savesrc>Save source</button></div>
     <p class="small muted" id="updmsg" style="margin:0">Works offline with the copy on this device; downloads a newer lexicon when one is published.</p></div></section>
@@ -771,7 +817,6 @@ function render() {
   else if (view === 'article') { html = viewArticle(arg); setTabs(''); }
   else if (view === 'quiz') { html = viewQuiz(); setTabs('quiz'); }
   else if (view === 'added') { html = viewAdded(arg); setTabs(''); if (arg && arg !== 'all') after = () => { const el = document.getElementById(arg); if (el) el.scrollIntoView(); }; }
-  else if (view === 'new') { html = '<p class="muted">Loading…</p>'; setTabs('new'); after = async () => { const h = await viewNew(); if (route().view === 'new') $('#main').innerHTML = h; }; }
   else html = viewHome();
   if (!(view === 'sign' || view === 'dx')) document.title = 'Sanctum of Neurology';
   if (view !== 'q' && view !== 'home') { $('#q').value = ''; if (document.activeElement === $('#q')) $('#q').blur(); }   // the query stays behind the Search tab
@@ -844,7 +889,21 @@ function wire() {
   });
   window.addEventListener('scroll', () => { scrollMemo.set(location.hash, window.scrollY); }, {passive: true});
   document.addEventListener('toggle', ev => { if (ev.target.closest && ev.target.closest('.summary')) LS.set('sumOpen', ev.target.open); }, true);
-  window.addEventListener('hashchange', render);
+  /* back / forward buttons: track position in our own history entries */
+  let navMax = 0;
+  function navSync() {
+    let i = history.state && typeof history.state.i === 'number' ? history.state.i : null;
+    if (i === null) { const prev = window.__navI; i = prev === undefined ? 0 : prev + 1; navMax = i; try { history.replaceState({i}, ''); } catch (e) {} }
+    window.__navI = i;
+    const b = $('#navback'), f = $('#navfwd');
+    if (b) b.disabled = i <= 0;
+    if (f) f.disabled = i >= navMax;
+  }
+  $('#navback').onclick = () => history.back();
+  $('#navfwd').onclick = () => history.forward();
+  document.addEventListener('keydown', ev => { if (ev.altKey && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') && !/input|textarea/i.test(document.activeElement.tagName)) { ev.preventDefault(); ev.key === 'ArrowLeft' ? history.back() : history.forward(); } });
+  window.addEventListener('hashchange', () => { render(); navSync(); });
+  navSync();
   document.addEventListener('change', ev => { if (ev.target.id === 'qzsys') { QZ.sys = ev.target.value; LS.set('qzSys', QZ.sys); QZ.cur = null; render(); } });
   document.addEventListener('click', async ev => {
     const t = ev.target.closest('button'); if (!t) return;
@@ -909,7 +968,7 @@ function wire() {
     box.hidden = false;
     box.innerHTML = list.length ? list.map(x => `<button data-cmpadd="${esc(x.e.id)}">${esc(x.e.name)}</button>`).join('') : '<div class="small muted" style="padding:8px 12px">No disease matches</div>';
   });
-  window.addEventListener('online', () => { checkUpdate(false); sync.maybeAuto(); if (route().view === 'home') render(); });
+  window.addEventListener('online', () => { checkUpdate(false); if (route().view === 'home') render(); });
   window.addEventListener('offline', () => { if (route().view === 'home') render(); });
 }
 function applyTheme() {
@@ -1032,6 +1091,7 @@ function daysSince(t) { return t ? Math.floor((Date.now() - t) / 864e5) : null; 
 function remindDays() { return LS.get('remindDays', 7); }
 // Banner on the home screen: alarm with an Update button when online, or a reminder to go online when the last check is old.
 function reminderHTML() {
+  return '';
   const online = navigator.onLine, d = daysSince(sync.last()), n = state.newCount || 0;
   if (n) return `<div class="alarmbar"><span class="msg"><span class="dot"></span> <b>New entities!</b> ${n} disease/sign name${n > 1 ? 's' : ''} from recent PubMed/AAN papers ${n > 1 ? 'are' : 'is'} not in the lexicon.
     ${online ? '' : ' <span class="muted">Connect to the internet to refresh the evidence and download lexicon updates.</span>'}</span><span class="sp"></span>
@@ -1099,11 +1159,10 @@ async function boot() {
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtl && !reloaded) { reloaded = true; location.reload(); } });
   }
   setTimeout(() => checkUpdate(false), 1500);
-  refreshAlarm().then(() => { if (route().view === 'home') render(); }); setTimeout(() => sync.maybeAuto(), 3000);
+  
   // while the app stays open: re-check every 6 hours when online
   setInterval(() => { if (navigator.onLine) checkUpdate(false); }, 30 * 60e3);   // lexicon: every 30 min while open
   document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) checkUpdate(false); });
-  setInterval(() => { if (navigator.onLine) sync.maybeAuto(); else if (route().view === 'home') render(); }, 6 * 3600e3);
   window.__sanctum = {search, norm, D: () => D, extractEntities, knownInLexicon, sync, refreshAlarm};
 }
 boot();

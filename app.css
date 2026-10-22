@@ -336,3 +336,21 @@ table.cmp{border-collapse:collapse;min-width:620px;width:100%;font-size:14px}
 
 .case.bd{margin-bottom:12px}.case.bd .opts{margin:8px 0 4px 22px;padding:0}.case.bd .opts li{margin:3px 0}
 .st.ds{text-decoration:none}.st.ds.g{background:var(--ok-bg);color:var(--ok)}.st.ds.y{background:var(--draft-bg);color:var(--draft)}.sdot{font-size:11px;margin-right:5px}
+
+/* changelog page: single column under the heading */
+.entry.added{display:block}
+.entry.added .addlist{grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr))}
+/* larger screens: scale the whole interface and content */
+@media (min-width:1400px){body{zoom:1.1}}
+@media (min-width:1700px){body{zoom:1.25}}
+@media (min-width:2100px){body{zoom:1.5}}
+@media (min-width:2800px){body{zoom:2}}
+
+.hist{display:flex;gap:2px;flex:none}
+.hist .iconbtn{border:0;background:transparent;cursor:pointer}
+.hist .iconbtn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.hist .iconbtn:disabled{opacity:.3;cursor:default}
+.hist .iconbtn:disabled:hover{background:transparent;color:var(--mute)}
+@media (max-width:640px){.hist .iconbtn{width:34px;height:34px}}
+.kbfix{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--soft)}
+.kbfix .chip{display:inline-block;padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:13px}

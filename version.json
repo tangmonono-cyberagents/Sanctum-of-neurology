@@ -1,24 +1,24 @@
 {
- "version": "2026.10.20-0600",
- "built": "2026-10-20",
+ "version": "2026.10.22-0417",
+ "built": "2026-10-22",
  "files": {
-  "signs.json": "34e734b8bbfb",
-  "diseases.json": "053f4ec608b2",
-  "similar.json": "c82bb532bf92",
-  "meta.json": "4e668bbb8e25",
-  "index.json": "3f142cdf7a43"
+  "signs.json": "ad2514614326",
+  "diseases.json": "3376975539d7",
+  "similar.json": "89e291f42e30",
+  "meta.json": "3c52dedc58d4",
+  "index.json": "3719990471d0"
  },
  "sizes": {
-  "signs.json": 581447,
-  "diseases.json": 13297476,
-  "similar.json": 663233,
-  "meta.json": 115581,
-  "index.json": 174348
+  "signs.json": 585453,
+  "diseases.json": 15353469,
+  "similar.json": 725734,
+  "meta.json": 136260,
+  "index.json": 191782
  },
  "counts": {
   "signs": 736,
-  "diseases": 1993,
+  "diseases": 2170,
   "curatedSigns": 22,
-  "curatedDiseases": 1993
+  "curatedDiseases": 2170
  }
 }
