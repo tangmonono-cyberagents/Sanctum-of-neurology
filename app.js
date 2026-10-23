@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.26';
+const APP_VERSION = '0.27';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -586,6 +586,26 @@ function bmKeys() {
   });
   return BM_KEYS;
 }
+// fungal / infectious pathogen pages, linked from disease pages that name the organism
+let PG_KEYS = null;
+function pgKeys() {
+  if (PG_KEYS) return PG_KEYS;
+  const extra = {dematiaceous: ['cladophialophora', 'exserohilum', 'dematiaceous', 'phaeohyphomycosis'], mucorales: ['mucor', 'mucormycosis', 'rhizopus'], scedosporium: ['scedospor', 'lomentospora']};
+  PG_KEYS = D.dx.filter(d => d.cat === 'pathogen').map(b => {
+    const base = b.name.replace(/\s*\(pathogen\)\s*$/i, '').trim();
+    const g = base.split(/[\s/]+/)[0].toLowerCase();
+    const sp = base.split(/\s+/)[1] || '';
+    let ks = extra[g] || [g.slice(0, Math.max(6, g.length - 2))];
+    if (/^(neoformans|gattii)$/i.test(sp)) ks = [sp.toLowerCase()];
+    const re = new RegExp('\\b(' + ks.join('|') + ')', 'i');
+    return {b, test: t => re.test(t)};
+  });
+  return PG_KEYS;
+}
+function pgFor(e) {
+  const txt = [e.name, e.formal, e.simple, ...(e.feat || []), ...(e.inv || []), e.more, e.det ? JSON.stringify(e.det) : ''].filter(Boolean).join(' \n ');
+  return pgKeys().filter(({b, test}) => b !== e && test(txt)).map(x => x.b);
+}
 function bmFor(e) {
   if (e.cat === 'biomarker') return [];
   const txt = [e.formal, e.simple, ...(e.feat || []), ...(e.inv || []), e.more, e.det ? JSON.stringify(e.det) : ''].filter(Boolean).join(' \n ');
@@ -612,6 +632,7 @@ function viewDx(e) {
     ${e.inv ? `<h2 class="sec" id="d-inv">Key investigations</h2><ul class="list">${e.inv.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
     ${!e.inv && e.more ? `<h2 class="sec" id="d-inv">Investigations &amp; management notes</h2><p class="prose">${esc(e.more)}</p>` : ''}
     ${(() => { const bm = bmFor(e); return bm.length ? `<h2 class="sec" id="d-bm">Antibody / biomarker pages <span class="count">${bm.length}</span></h2><div class="chips">${bm.map(b => `<a class="chip" href="${link(b)}">${esc(b.name)}</a>`).join('')}</div>` : ''; })()}
+    ${(() => { const pg = pgFor(e); return pg.length ? `<h2 class="sec" id="d-pg">Pathogen pages <span class="count">${pg.length}</span></h2><div class="chips">${pg.map(b => `<a class="chip" href="${link(b)}">${esc(b.name.replace(/ \(pathogen\)$/, ''))}</a>`).join('')}</div>` : ''; })()}
     ${detHTML(e.det, DET_DX, 'd-depth', e.srcmap)}
     ${c ? `<h2 class="sec" id="d-case">Illustrative case <span class="st draft">invented for teaching</span></h2>
       <div class="case"><dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Exam</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>
@@ -680,7 +701,7 @@ function groupCounts(field) {
 }
 function viewBrowse(arg) {
   const [mode, key] = arg.split('/');
-  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['bm', 'Biomarkers'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡']];
+  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['bm', 'Biomarkers'], ['pg', 'Pathogens'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡']];
   const m = mode || 'sys';
   let body = '';
   const nav = `<div class="seg">${modes.map(([k, l]) => `<button data-browse="${k}" class="${m === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
@@ -712,11 +733,15 @@ function viewBrowse(arg) {
       ${[...groups.entries()].sort((a, b) => sysLabel(a[0]).localeCompare(sysLabel(b[0]))).map(([g, l]) => `<h3 class="sec">${esc(sysLabel(g))} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('')}`;
   } else if (m === 'bm') {
     const arr = D.dx.filter(d => d.cat === 'biomarker');
-    const grp = d => (d.sys || []).includes('myopathy') ? 'Myositis antibodies' : 'Neural antibodies (encephalitis and related)';
+    const grp = d => (d.sys || []).includes('myopathy') ? 'Myositis antibodies' : (d.sys || [])[0] === 'neurodegenerative' ? 'Prion disease markers' : 'Neural antibodies (encephalitis and related)';
     const groups = new Map();
     for (const d of arr) { const g = grp(d); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(d); }
     body = `<p class="small muted">One page per antibody: what it targets, the syndrome it marks, cancer and organ risks, and how it changes management.</p>
       ${[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([g, l]) => `<h3 class="sec">${esc(g)} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('') || '<p class="empty">No biomarker pages yet.</p>'}`;
+  } else if (m === 'pg') {
+    const arr = D.dx.filter(d => d.cat === 'pathogen').sort((a, b) => a.name.localeCompare(b.name));
+    body = `<p class="small muted">One page per organism: where it lives, who gets it, the CNS syndromes it causes, how to confirm it and how to treat it.</p>
+      <h3 class="sec">Fungi (neuromycoses) <span class="count">${arr.length}</span></h3>${arr.length ? list(arr) : '<p class="empty">No pathogen pages yet.</p>'}`;
   } else if (m === 'curated') {
     body = `<h2 class="sec">Curated diseases <span class="count">${D.dx.filter(d => d.cur).length}</span></h2>${list(D.dx.filter(d => d.cur).sort((a, b) => a.name.localeCompare(b.name)))}
       <h2 class="sec">Curated signs <span class="count">${D.signs.filter(d => d.cur).length}</span></h2>${list(D.signs.filter(d => d.cur).sort((a, b) => a.name.localeCompare(b.name)))}`;
