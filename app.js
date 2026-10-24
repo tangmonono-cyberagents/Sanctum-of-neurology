@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.27';
+const APP_VERSION = '0.29';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -70,6 +70,7 @@ function prepare(data) {
   for (const s of D.signs) { s.t = 'sign'; D.all.push(s); }
   for (const d of D.dx) { d.t = 'dx'; D.all.push(d); }
   D.dx.forEach((d, i) => { d.ix = i; });
+  D.dxAll = D.dx; D.ns = D.dx.filter(d => d.cat === 'neuroscience'); D.dx = D.dx.filter(d => d.cat !== 'neuroscience');
   for (const e of D.all) {
     byId.set(e.id, e);
     e._n = ' ' + e.nN + ' ';
@@ -85,6 +86,7 @@ function prepare(data) {
   D.bodyReady = false;
   const build = (i) => { const end = Math.min(D.all.length, i + 400); for (; i < end; i++) { const e = D.all[i];
       e._b = ' ' + norm([e.formal, e.simple, e.more, e.exam, e.pos, (e.feat || []).join(' '), (e.inv || []).join(' ')].join(' ')) + ' ';
+      e._d = ' ' + norm([e.formal, e.simple].join(' ')) + ' ';
       e._t = e.th ? norm(e.th) : ''; }
     if (i < D.all.length) setTimeout(() => build(i), 0); else { D.bodyReady = true; if (state.q) render(); } };
   build(0);
@@ -95,7 +97,7 @@ async function similarFor(d) {
     if (el) D.similar = JSON.parse(el.textContent);
     else { try { D.similar = D._similar || await fetch('data/similar.json').then(r => r.json()); } catch (e) { D.similar = []; } }
   }
-  return (D.similar[d.ix] || []).map(([j, s, terms]) => ({e: D.dx[j], score: s / 100, terms}));
+  return (D.similar[d.ix] || []).map(([j, s, terms]) => ({e: D.dxAll[j], score: s / 100, terms})).filter(x => x.e && (x.e.cat === 'neuroscience') === (d.cat === 'neuroscience'));
 }
 
 // ------------------------------------------------------------ search
@@ -132,8 +134,8 @@ function fieldScore(e, v) {
     if (a.startsWith(v)) s = Math.max(s, 60);
   }
   if (s < 50 && e._aj.includes(' ' + v)) s = Math.max(s, 46);
-  if (!s && !short && e._b && e._b.includes(' ' + v)) s = 12 + (e._b.includes(' ' + v + ' ') ? 3 : 0);
-  if (!s && e._t && /[฀-๿]/.test(v) && e._t.includes(v)) s = 14;
+  if (!s && !short && e._b && e._b.includes(' ' + v)) s = (e._d && e._d.includes(' ' + v) ? 18 : 12) + (e._b.includes(' ' + v + ' ') ? 3 : 0);
+  if (!s && e._t && /[฀-๿]/.test(v)) { const i = e._t.indexOf(v); if (i >= 0) s = i < 60 ? 17 : 14; }
   return s;
 }
 // Thai keyboard (Kedmanee) → QWERTY, for text typed with the wrong keyboard language
@@ -190,8 +192,8 @@ function searchCore(q, limit = 60) {
   let res = scored;
   const anyFull = scored.some(x => x.full);
   if (anyFull) res = scored.filter(x => x.full);
-  const signs = res.filter(x => x.e.t === 'sign'), dx = res.filter(x => x.e.t === 'dx');
-  return {q: raw, terms, signs, dx, partial: !anyFull && tv.length > 1, used: [...used].slice(0, 4), ms: performance.now() - t0, combo: isCombo};
+  const signs = res.filter(x => x.e.t === 'sign'), dx = res.filter(x => x.e.t === 'dx' && x.e.cat !== 'neuroscience'), ns = res.filter(x => x.e.cat === 'neuroscience');
+  return {q: raw, terms, signs, ns, dx, partial: !anyFull && tv.length > 1, used: [...used].slice(0, 4), ms: performance.now() - t0, combo: isCombo};
 }
 function snippet(e, terms) {
   const text = e.formal || e.simple || '';
@@ -495,13 +497,14 @@ function viewHome() {
   return `${reminderHTML()}<section class="hello"><h1>What would you like to look up?</h1>
     <p>Type a sign, a disease, an abbreviation or a few findings joined with “+”. Misspellings are fine.</p>
     <div class="tries">${['ptosis + fatigable', 'INO', 'CIDP', 'babinsky', 'thunderclap', 'แขนขาอ่อนแรง'].map(t => `<button data-try="${esc(t)}">${esc(t)}</button>`).join('')}</div></section>
+  ${D.ns.length ? `<section class="card stcard"><h3>Neuroscience</h3><p class="small" style="margin:0"><a href="#/browse/ns">Tracts, circuits and neuroanatomy <b>${D.ns.length}</b> pages</a> — pathway, function, bedside test and lesion for each.</p></section>` : ''}
   ${recentHomeHTML()}
   <section class="card stcard"><h3>Data status</h3><p class="small" style="margin:0"><a href="#/browse/status/g">🟢 ข้อมูลเชิงลึกแล้ว <b>${D.dx.filter(d => d.st === 'g').length}</b></a> · <a href="#/browse/status/y">🟡 รอข้อมูลเพิ่มเติม <b>${D.dx.filter(d => d.st === 'y').length}</b></a> <span class="muted">— 🟡 pages are waiting for a disease-specific monograph article.</span></p></section>
   ${hist.length ? `<h2 class="sec">Recently opened</h2><div class="chips">${hist.map(e => `<a class="chip" href="${link(e)}">${esc(e.name)}</a>`).join('')}</div>` : ''}
   ${arts.length ? `<h2 class="sec">Clinical overviews <span class="count">${arts.length}</span></h2><div class="arts">${arts.map(a => `<a class="art" href="#/article/${esc(a.id)}"><b>${esc(a.title)}</b><span>${esc(a.body[0])}</span></a>`).join('')}</div>` : ''}
   <h2 class="sec">Curated diseases <span class="count">${cur.length}</span></h2>
   <div class="topics">${topics}<details><summary><span>Core bedside signs</span><span class="faint small">${csigns.length}</span></summary><div class="chips">${csigns.map(s => `<a class="chip" href="${link(s)}">${esc(s.name)}</a>`).join('')}</div></details></div>
-  <div class="homefoot"><span>${D.signs.length.toLocaleString()} signs · ${D.dx.length.toLocaleString()} diseases</span><span>Data ${esc(v.version)}</span><a href="#/install">Install for offline use</a><span>For education only — not a diagnostic tool</span></div>`;
+  <div class="homefoot"><span>${D.signs.length.toLocaleString()} signs · ${D.dx.length.toLocaleString()} diseases${D.ns.length ? ` · ${D.ns.length} neuroscience` : ''}</span><span>Data ${esc(v.version)}</span><a href="#/install">Install for offline use</a><span>For education only — not a diagnostic tool</span></div>`;
 }
 function viewArticle(id) {
   const a = (D.meta.articles || []).find(x => x.id === id);
@@ -521,14 +524,18 @@ function viewResults(r) {
   const cap = n => Math.min(n, 60);
   const fixes = r.used.filter(u => !u.endsWith('(synonym)'));
   const dym = fixes.length ? `<p class="dym">Including spelling matches: ${fixes.map(u => esc(u.split('→')[1])).join(', ')}</p>` : '';
-  if (!r.dx.length && r.signs.length) state.resTab = 'sign'; else if (r.dx.length && !r.signs.length) state.resTab = 'dx';
+  const nsL = r.ns || [];
+  if (state.resTabQ !== r.q) { state.resTab = 'dx'; state.resTabQ = r.q; }
+  if (state.resTab === 'ns' && !nsL.length) state.resTab = 'dx';
+  if (D.bodyReady && !r.dx.length && r.signs.length) state.resTab = 'sign'; else if (r.dx.length && !r.signs.length && state.resTab !== 'ns') state.resTab = 'dx';
+  if (!r.dx.length && !r.signs.length && nsL.length) state.resTab = 'ns';
   const kb = r.fixed ? `<p class="dym kbfix">Thai keyboard detected. Showing results for “<b>${esc(r.fixed)}</b>”. <span class="muted">Suggestions:</span> ${r.dx.concat(r.signs).slice(0, 5).map(x => `<a class="chip" href="${link(x.e)}">${esc(x.e.name)}</a>`).join(' ')}</p>` : '';
   const part = r.partial ? `<p class="dym muted">No entry matches every finding; showing entries that match some of them.</p>` : '';
   const col = (k, title, list) => `<section class="rescol${state.resTab === k ? ' show' : ''}"><h2 class="sec">${title} <span class="count">${list.length}</span></h2>
     ${list.length ? `<ul class="res">${list.slice(0, cap(list.length)).map(x => itemHTML(x, r.terms)).join('')}</ul>${list.length > 60 ? `<p class="small muted more">Showing 60 of ${list.length}. Add another word to narrow.</p>` : ''}` : '<p class="empty">No matches</p>'}</section>`;
-  const tabs = `<div class="seg restabs"><button data-rt="dx" class="${state.resTab === 'dx' ? 'on' : ''}">Diseases ${r.dx.length}</button><button data-rt="sign" class="${state.resTab === 'sign' ? 'on' : ''}">Signs ${r.signs.length}</button></div>`;
-  if (!r.dx.length && !r.signs.length) return `<div class="empty"><p><b>No match for “${esc(r.q)}”.</b></p><p class="small">Try fewer words, an abbreviation, or separate findings with “+”.</p></div>`;
-  return `${kb}${summaryPanel(r)}${dym}${part}${tabs}<div class="rescols one">${col('dx', 'Diseases', r.dx)}${col('sign', 'Signs', r.signs)}</div>`;
+  const tabs = `<div class="seg restabs"><button data-rt="dx" class="${state.resTab === 'dx' ? 'on' : ''}">Diseases ${r.dx.length}</button><button data-rt="sign" class="${state.resTab === 'sign' ? 'on' : ''}">Signs ${r.signs.length}</button><button data-rt="ns" class="${state.resTab === 'ns' ? 'on' : ''}">Neuroscience ${nsL.length}</button></div>`;
+  if (!r.dx.length && !r.signs.length && !nsL.length) return `<div class="empty"><p><b>No match for “${esc(r.q)}”.</b></p><p class="small">Try fewer words, an abbreviation, or separate findings with “+”.</p></div>`;
+  return `${kb}${summaryPanel(r)}${dym}${part}${tabs}<div class="rescols one">${col('dx', 'Diseases', r.dx)}${col('sign', 'Signs', r.signs)}${col('ns', 'Neuroscience', nsL)}</div>`;
 }
 function entryHead(e) {
   const kind = e.t === 'sign' ? 'Sign' : (e.cat ? e.cat.charAt(0).toUpperCase() + e.cat.slice(1) : 'Disease');
@@ -555,6 +562,7 @@ function viewSign(e) {
     ${jumpNav(nav)}
     ${e.exam ? `<h2 class="sec" id="s-exam">How to examine</h2><p class="prose">${esc(e.exam)}</p>` : ''}
     ${e.pos ? `<h2 class="sec" id="s-pos">What a positive result means</h2><p class="prose">${esc(e.pos)}</p>` : ''}
+    ${nsChips(e)}
     ${detHTML(e.det, DET_SIGN, 's-depth', e.srcmap)}
     ${!e.exam && !e.pos ? `<p class="small muted" style="margin-top:14px">Examination steps and interpretation have not been written for this sign yet; the definition above includes the key finding.</p>` : ''}
     <h2 class="sec" id="s-loc">Localization ${autoChip(e, 'loc')}</h2>${axisHTML(e.loc, true)}
@@ -611,7 +619,53 @@ function bmFor(e) {
   const txt = [e.formal, e.simple, ...(e.feat || []), ...(e.inv || []), e.more, e.det ? JSON.stringify(e.det) : ''].filter(Boolean).join(' \n ');
   return bmKeys().filter(({test}) => test(txt)).map(x => x.b);
 }
+const NS_KIND = {tract: 'Tracts and pathways', reflex: 'Reflex arcs', nucleus: 'Nuclei and grey matter', region: 'Regions and lobes', circuit: 'Circuits and networks', system: 'Functional systems', vascular: 'Blood supply and CSF', transmitter: 'Neurotransmitter systems', physiology: 'Cellular physiology', cognition: 'Cognitive and behavioural networks', development: 'Development'};
+const DET_NS = [['patho', 'Anatomy and physiology'], ['clinical', 'Clinical correlation'], ['diagnosis', 'Testing at the bedside and in the lab'], ['treatment', 'Lesion syndromes'], ['prognosis', 'Development, plasticity and recovery']];
+function nsLinks(names) { return (names || []).map(n => resolveFind(n)).filter(Boolean); }
+function nsChips(e) {
+  if (!D.ns || !D.ns.length || e.cat === 'neuroscience') return '';
+  const n = norm(e.name);
+  const hits = D.ns.filter(x => x.ns && [...(x.ns.dx || []), ...(x.ns.signs || [])].some(k => norm(k) === n));
+  return hits.length ? `<h2 class="sec" id="d-ns">Neuroscience behind it <span class="count">${hits.length}</span></h2><div class="chips">${hits.map(b => `<a class="chip" href="${link(b)}">${esc(b.name)}</a>`).join('')}</div>` : '';
+}
+function viewNs(e) {
+  const x = e.ns || {}, c = e.case;
+  const rel = (e.ddx || []).map(d => ({e: byId.get(d.id), pt: d.pt})).filter(d => d.e);
+  const dxs = nsLinks(x.dx), sgs = nsLinks(x.signs);
+  const steps = [['Origin', x.origin], ['Course', x.course], ['Decussation', x.decussation], ['Termination', x.termination]].filter(s => s[1]);
+  const nav = [['n-glance', 'At a glance'], steps.length && ['n-path', 'Pathway'], x.lesions && ['n-les', 'Lesions'], e.feat && ['n-feat', 'Key facts'], e.inv && ['n-test', 'How to test'], e.det && ['n-depth', 'In depth'], c && ['n-case', 'Case'], e.qx && e.qx.length && ['n-qx', 'Questions'], ['n-rel', 'Related'], ['n-read', 'Read']].filter(Boolean);
+  return `<div class="entry"><div>${entryHead(e)}
+    <div class="toolrow">${langSeg()}</div>${defText(e)}
+    ${jumpNav(nav)}
+    <h2 class="sec" id="n-glance">At a glance</h2>
+    <dl class="glance">
+      ${x.kind ? `<dt>Type</dt><dd><a class="chip" href="#/browse/ns">${esc(NS_KIND[x.kind] || x.kind)}</a></dd>` : ''}
+      ${x.level ? `<dt>Level</dt><dd>${esc(x.level)}</dd>` : ''}
+      ${x.function ? `<dt>Function</dt><dd>${esc(x.function)}</dd>` : ''}
+      ${x.blood ? `<dt>Blood supply</dt><dd>${esc(x.blood)}</dd>` : ''}
+      ${x.transmitter ? `<dt>Transmitter</dt><dd>${esc(x.transmitter)}</dd>` : ''}
+      <dt>Localization</dt><dd><div class="chips">${(e.loc || []).map(l => `<a class="chip" href="#/browse/loc/${l}">${esc(locLabel(l))}</a>`).join('') || '<span class="muted small">—</span>'}</div></dd>
+    </dl>
+    ${steps.length ? `<h2 class="sec" id="n-path">Pathway</h2><ol class="nspath">${steps.map(([k, v]) => `<li><b>${k}</b><span>${esc(v)}</span></li>`).join('')}</ol>` : ''}
+    ${x.lesions && x.lesions.length ? `<h2 class="sec" id="n-les">What a lesion does</h2><div class="tw"><table class="nsles"><thead><tr><th>Lesion site</th><th>Result</th></tr></thead><tbody>${x.lesions.map(l => `<tr><td>${esc(l.site)}</td><td>${esc(l.effect)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${e.feat ? `<h2 class="sec" id="n-feat">Key facts</h2><ul class="list">${e.feat.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
+    ${e.inv ? `<h2 class="sec" id="n-test">How to test it</h2><ul class="list">${e.inv.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
+    ${detHTML(e.det, DET_NS, 'n-depth', e.srcmap)}
+    ${c ? `<h2 class="sec" id="n-case">Localization case <span class="st draft">invented for teaching</span></h2>
+      <div class="case"><dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Exam</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>
+      <div class="q">${esc(c.q)}</div><button class="btn" data-reveal style="margin-top:10px">Show answer</button><div class="a" hidden>${esc(c.a)}</div></div>` : ''}
+    ${e.qx && e.qx.length ? `<h2 class="sec" id="n-qx">Board-style questions <span class="st draft">invented for teaching</span></h2>
+      ${e.qx.map(q => `<div class="case bd"><p class="prose">${esc(q.stem)}</p><div class="q">${esc(q.q)}</div><ol class="opts" type="A">${q.opts.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
+      <button class="btn" data-reveal style="margin-top:6px">Show answer</button><div class="a" hidden><b>${LET[q.ans]}. ${esc(q.opts[q.ans])}</b> — ${esc(q.why)}</div></div>`).join('')}` : ''}
+    <h2 class="sec" id="n-rel">Related</h2>
+    ${rel.length ? `<ul class="ddx">${rel.map(r => `<li><a href="${link(r.e)}">${esc(r.e.name)}</a><span class="pt">${esc(r.pt)}</span></li>`).join('')}</ul>` : ''}
+    ${dxs.length ? `<h3 class="sec">Diseases that involve it</h3><div class="chips">${dxs.map(d => `<a class="chip" href="${link(d)}">${esc(d.name)}</a>`).join('')}</div>` : ''}
+    ${sgs.length ? `<h3 class="sec">Signs that test it</h3><div class="chips">${sgs.map(d => `<a class="chip" href="${link(d)}">${esc(d.name)}</a>`).join('')}</div>` : ''}
+    <h2 class="sec" id="n-read">Read</h2>${e.read && e.read.length ? `<ul class="list small">${e.read.map(bookRef).join('')}</ul>` : ''}
+    ${footer(e)}</div>${axisHTML(e.loc)}</div>`;
+}
 function viewDx(e) {
+  if (e.cat === 'neuroscience') return viewNs(e);
   const signs = (e.signs || []).map(id => byId.get(id)).filter(Boolean);
   const c = e.case;
   const ddx = (e.ddx || []).map(x => ({e: byId.get(x.id), pt: x.pt})).filter(x => x.e);
@@ -633,6 +687,7 @@ function viewDx(e) {
     ${!e.inv && e.more ? `<h2 class="sec" id="d-inv">Investigations &amp; management notes</h2><p class="prose">${esc(e.more)}</p>` : ''}
     ${(() => { const bm = bmFor(e); return bm.length ? `<h2 class="sec" id="d-bm">Antibody / biomarker pages <span class="count">${bm.length}</span></h2><div class="chips">${bm.map(b => `<a class="chip" href="${link(b)}">${esc(b.name)}</a>`).join('')}</div>` : ''; })()}
     ${(() => { const pg = pgFor(e); return pg.length ? `<h2 class="sec" id="d-pg">Pathogen pages <span class="count">${pg.length}</span></h2><div class="chips">${pg.map(b => `<a class="chip" href="${link(b)}">${esc(b.name.replace(/ \(pathogen\)$/, ''))}</a>`).join('')}</div>` : ''; })()}
+    ${nsChips(e)}
     ${detHTML(e.det, DET_DX, 'd-depth', e.srcmap)}
     ${c ? `<h2 class="sec" id="d-case">Illustrative case <span class="st draft">invented for teaching</span></h2>
       <div class="case"><dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Exam</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>
@@ -701,7 +756,7 @@ function groupCounts(field) {
 }
 function viewBrowse(arg) {
   const [mode, key] = arg.split('/');
-  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['bm', 'Biomarkers'], ['pg', 'Pathogens'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡']];
+  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['bm', 'Biomarkers'], ['pg', 'Pathogens'], ['ns', 'Neuroscience'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡']];
   const m = mode || 'sys';
   let body = '';
   const nav = `<div class="seg">${modes.map(([k, l]) => `<button data-browse="${k}" class="${m === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
@@ -738,6 +793,12 @@ function viewBrowse(arg) {
     for (const d of arr) { const g = grp(d); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(d); }
     body = `<p class="small muted">One page per antibody: what it targets, the syndrome it marks, cancer and organ risks, and how it changes management.</p>
       ${[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([g, l]) => `<h3 class="sec">${esc(g)} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('') || '<p class="empty">No biomarker pages yet.</p>'}`;
+  } else if (m === 'ns') {
+    const groups = new Map();
+    for (const d of D.ns) { const g = NS_KIND[(d.ns || {}).kind] || 'Other topics'; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(d); }
+    const order = Object.values(NS_KIND);
+    body = `<p class="small muted">Neuroanatomy, tracts, circuits and physiology: where each pathway runs, what it does, how to test it at the bedside and what a lesion looks like.</p>
+      ${[...groups.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([g, l]) => `<h3 class="sec">${esc(g)} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('') || '<p class="empty">No neuroscience pages yet.</p>'}`;
   } else if (m === 'pg') {
     const arr = D.dx.filter(d => d.cat === 'pathogen').sort((a, b) => a.name.localeCompare(b.name));
     body = `<p class="small muted">One page per organism: where it lives, who gets it, the CNS syndromes it causes, how to confirm it and how to treat it.</p>
