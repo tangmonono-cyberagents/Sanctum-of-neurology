@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.29';
+const APP_VERSION = '0.39';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -483,6 +483,307 @@ function viewQuiz() {
   }
   return `<article class="entry quiz">${head}${body}<div class="foot"><div>Progress is stored only on this device. For education only — not a diagnostic tool.</div></div></article>`;
 }
+// ------------------------------------------------------------ Gush! — swipe-to-review flash cards (mobile first)
+// Leitner boxes kept on this device only (LS gushBox). Unsure cards come back within the session and sooner next time.
+const GUSH_TYPES = [['dx', 'Diseases', 'name + a rotating question'], ['case', 'Case quiz', 'short vignette on the front'], ['sign', 'Signs', 'bedside signs'], ['ns', 'Neuroscience', 'tracts and circuits']];
+const G = {fam: new Set(), tq: [], lastQ: '', pace: 0, tIdx: -1, tId: 0, open: false, cards: [], cur: 0, pend: [], recent: [], seen: 0, known: 0, unsure: 0, blockStart: 0, pool: null, gate: false};
+const gCfg = () => Object.assign({types: ['dx', 'case', 'sign', 'ns'], sys: [], yellow: false, every: 25, paceOn: false, pace: 8}, LS.get('gushCfg', {}));
+const gBox = () => LS.get('gushBox', {});
+const gKey = e => 'g:' + e.id;
+function gSigSys(s) { const out = new Set(); for (const id of (s.dx || []).slice(0, 12)) { const d = byId.get(id); if (d) (d.sys || []).forEach(x => out.add(x)); } return [...out]; }
+// Umbrella terms ("Myopathy", "Cerebellar disorders", "Toxic neuropathies") are skipped: every card names a disease, sign or structure.
+const G_HEAD = new Set(('myopathy neuropathy encephalopathy myelopathy radiculopathy monoradiculopathy plexopathy polyneuropathy mononeuropathy polyradiculopathy ganglionopathy channelopathy axonopathy neuronopathy cardiomyopathy ' +
+  'dementia ataxia chorea dystonia tremor myoclonus parkinsonism dyskinesia akathisia akinesia athetosis ballism tic seizure epilepsy spasm cramp stereotypy myotonia ' +
+  'encephalitis meningitis meningoencephalitis encephalomyelitis myelitis myositis vasculitis arteritis stroke headache vertigo aphasia apraxia agnosia amnesia coma delirium catatonia insomnia hypersomnia ' +
+  'disease disorder syndrome condition state tumour tumor neoplasm infection lesion malformation aneurysm leukodystrophy leukoencephalopathy hydrocephalus metastasis metastase lymphoma degeneration failure ' +
+  'haemorrhage hemorrhage infarction atrophy dystrophy palsy paralysis weakness pain abnormality complication problem deficiency toxicity poisoning').split(' '));
+const G_ADJ = new Set(('acute chronic subacute hyperacute cerebellar cortical subcortical central peripheral autoimmune autonomic cerebrovascular cognitive behavioral behavioural balance congenital cranial focal generalized generalised ' +
+  'hereditary inherited familial acquired idiopathic symptomatic inflammatory immune-mediated metabolic toxic nutritional primary secondary spinal brainstem cerebral neuromuscular neurological neurologic movement motor sensory sensorimotor ' +
+  'other action rest postural kinetic intention arm leg limb chin head vocal jaw distal proximal axonal paediatric pediatric childhood adult neonatal infantile episodic paroxysmal progressive degenerative neurodegenerative ' +
+  'drug-induced drug induced muscle muscular nerve neuron neuronal brain cord cervical thoracic lumbar lumbosacral multiple mixed painful large-fibre small-fibre fibre psychiatric functional organic intracranial extracranial ' +
+  'ocular visual auditory gait sleep mood personality mental and or of the with in a an non to related associated type').split(' '));
+const G_KEEP = new Set(['cerebral palsy', 'motor neuron disease', 'idiopathic hypersomnia', 'central cord syndrome', 'spinal cord infarction', 'episodic ataxia', 'sleep paralysis']);
+const gStem = w => /ies$/.test(w) && w.length > 5 ? w.slice(0, -3) + 'y' : /e?s$/.test(w) && G_HEAD.has(w.replace(/e?s$/, '')) ? w.replace(/e?s$/, '') : /s$/.test(w) && !/(is|us|ss|as|os)$/.test(w) ? w.slice(0, -1) : w;
+const gWords = n => n.toLowerCase().replace(/[’']s\b/g, '').split(/[^a-z0-9+\-]+/).filter(Boolean);
+function gGeneric(e) {
+  if (e.t === 'sign' || e.cat === 'neuroscience') return false;
+  if (e._gen != null) return e._gen;
+  let n = e.name.split(/\s+[—–]\s+/)[0]; const g = () => {
+    if (G_KEEP.has(n.toLowerCase())) return false;
+    const comma = n.includes(','); if (comma && /\(/.test(n)) return false; if (comma) n = n.split(',')[0];
+    const abbr = /\([^)]*\)/.test(n), ws = gWords(n.replace(/\([^)]*\)/g, ' '));
+    if (!ws.length) return false;
+    const st = ws.map(gStem);
+    if (!ws.every((w, i) => G_HEAD.has(w) || G_ADJ.has(w) || G_HEAD.has(st[i]) || G_ADJ.has(st[i]))) return false;
+    return !abbr || st[st.length - 1] !== ws[ws.length - 1];   // a specific abbreviation keeps a singular name (AIDP); plural umbrellas go
+  };
+  return (e._gen = g());
+}
+// Family keys: entries that share a distinctive word or abbreviation (NMOSD / NMO-ON / ...) count as one group, so a deck holds one of each.
+const G_FSTOP = new Set('antibody antibodies onset status benign system systemic autosomal dominant recessive artery arterial pathway immune anterior posterior spectrum associated related induced traumatic variant variants classic early late adult'.split(' '));
+function gFam(e) {
+  if (e._fam) return e._fam;
+  const ks = new Set(), n = e.name;
+  for (const a of [...(n.match(/\(([^)]*)\)/g) || []).map(x => x.slice(1, -1)), ...(e.ab || []).filter(a => /^[A-Z0-9\-]{2,8}$/.test(a))])
+    for (const t of a.split(/[\s\/,;\-]+/)) if (/^[A-Z][A-Z0-9]{1,7}$/.test(t)) ks.add('A:' + t.slice(0, 3).toLowerCase());
+  for (const w of gWords(n.replace(/\([^)]*\)/g, ' ')))
+    if (w.length >= 5 && !G_HEAD.has(w) && !G_ADJ.has(w) && !G_HEAD.has(gStem(w)) && !G_ADJ.has(gStem(w)) && !G_FSTOP.has(w) && !G_FSTOP.has(gStem(w))) ks.add('W:' + w.slice(0, 7));
+  return (e._fam = [...ks]);
+}
+const gClash = e => gFam(e).some(k => G.fam.has(k));
+function gEligible(e) {
+  if (e.t === 'sign') return !!(e.cur || (e.simple && (e.dx || []).length));
+  if (e.cat === 'neuroscience') return !!((e.feat || []).length >= 2 || (e.ns || {}).function);
+  return (e.feat || []).length >= 2 && !gGeneric(e);
+}
+function gPool(cfg) {
+  const T = new Set(cfg.types), S = new Set(cfg.sys);
+  const okSys = list => !S.size || (list || []).some(x => S.has(x));
+  const out = [];
+  if (T.has('dx') || T.has('case')) for (const d of D.dx) {
+    if (!gEligible(d) || !okSys(d.sys) || (!cfg.yellow && d.st !== 'g')) continue;
+    const modes = []; if (T.has('dx')) modes.push('dx'); if (T.has('case') && d.case && d.case.story) modes.push('case');
+    if (modes.length) out.push({e: d, modes});
+  }
+  if (T.has('sign')) for (const s of D.signs) { if (gEligible(s) && (cfg.yellow || s.cur) && okSys(gSigSys(s))) out.push({e: s, modes: ['sign']}); }
+  if (T.has('ns')) for (const n of D.ns) { if (gEligible(n) && (!S.size || !(n.sys || []).length || okSys(n.sys))) out.push({e: n, modes: ['ns']}); }
+  return out;
+}
+function gGroups() {
+  const m = new Map();
+  for (const d of D.dx) if (gEligible(d)) for (const s of (d.sys || []).slice(0, 2)) m.set(s, (m.get(s) || 0) + (d.st === 'g' ? 1 : 0));
+  return [...m.entries()].filter(([, n]) => n).sort((a, b) => sysLabel(a[0]).localeCompare(sysLabel(b[0])));
+}
+function gPick() {
+  const pos = G.cards.length;
+  const pi = G.pend.findIndex(p => p.at <= pos);
+  if (pi >= 0) { const p = G.pend.splice(pi, 1)[0]; if (p.mode !== 'case') G.lastQ = p.q; return {it: p.it, mode: p.mode, q: p.q, again: true}; }
+  const pool = G.pool; if (!pool.length) return null;
+  const box = gBox(), now = Date.now(), recent = new Set(G.recent);
+  const fresh = pool.filter(o => !gClash(o.e));   // one card per disease family in each deck
+  let cand = fresh.filter(o => !recent.has(o.e.id) && (!box[gKey(o.e)] || box[gKey(o.e)].due <= now));
+  if (!cand.length) cand = fresh.filter(o => !recent.has(o.e.id));
+  if (!cand.length) cand = fresh.length ? fresh : pool.filter(o => !recent.has(o.e.id));
+  if (!cand.length) cand = pool;
+  const w = cand.map(o => { const b = box[gKey(o.e)]; return b ? 6 - b.b : 3; });   // new = 3, unsure (box 1) = 5, known (box 5) = 1
+  let r = Math.random() * w.reduce((a, b) => a + b, 0), it = cand[cand.length - 1];
+  for (let i = 0; i < cand.length; i++) { r -= w[i]; if (r <= 0) { it = cand[i]; break; } }
+  const mode = it.modes[Math.floor(Math.random() * it.modes.length)];
+  gFam(it.e).forEach(k => G.fam.add(k));
+  return {it, mode, q: mode === 'case' ? 'case' : gNextQ(it.e)};
+}
+// Rotating questions: the back answers exactly what the front asks, drawn from that section of the page.
+const GQ_ORDER = ['feat', 'patho', 'inv', 'clin', 'tx'];
+const GQ = {
+  dx:   {feat: ['Key features', 'What are the key features?'], patho: ['Pathophysiology', 'What is the pathophysiology?'], inv: ['Key investigations', 'What are the key investigations?'], clin: ['Clinical picture', 'What is the typical clinical picture?'], tx: ['Treatment', 'How is it treated?']},
+  sign: {feat: ['Key features', 'What are the key features of this sign?'], patho: ['Pathophysiology', 'What is the mechanism behind this sign?'], inv: ['How to elicit', 'How do you elicit it?'], clin: ['Clinical meaning', 'What does a positive sign mean, and where is the lesion?']},
+  ns:   {feat: ['Key features', 'What are the key features?'], patho: ['Anatomy & physiology', 'Describe its anatomy and function.'], inv: ['Bedside testing', 'How do you test it at the bedside?'], clin: ['Lesion picture', 'What happens when it is damaged?'], tx: ['Clinical correlation', 'Which syndromes or treatments relate to it?']},
+};
+const gKind = e => e.t === 'sign' ? 'sign' : e.cat === 'neuroscience' ? 'ns' : 'dx';
+const gSent = t => String(t || '').split(/(?<=[.!?])\s+(?=[A-Z0-9(“"])/).map(x => x.trim()).filter(Boolean).slice(0, 5);
+function gAnswer(e, q) {
+  const det = e.det || {}, k = gKind(e);
+  if (q === 'case' || q === 'feat') {
+    if (k === 'sign') { const p = (det.pearls || []).slice(0, 4); return p.length ? p : gSent(e.formal).slice(0, 3); }
+    return (e.gush || e.feat || []).slice(0, 5);
+  }
+  if (q === 'patho') return gSent(k === 'sign' ? det.mechanism : det.patho);
+  if (q === 'inv') return k === 'sign' ? gSent(det.technique || e.exam) : (e.inv || []).slice(0, 5);
+  if (q === 'clin') {
+    if (k !== 'sign') return gSent(det.clinical);
+    const seen = (e.dx || []).map(id => byId.get(id)).filter(Boolean).slice(0, 5).map(d => d.name);
+    return [...gSent(det.interpretation || e.pos).slice(0, 3), ...(seen.length ? ['Seen in: ' + seen.join('; ')] : [])];
+  }
+  if (q === 'tx') return k === 'sign' ? [] : gSent(det.treatment);
+  return [];
+}
+function gNextQ(e) {
+  const k = gKind(e), ok = GQ_ORDER.filter(q => GQ[k][q] && gAnswer(e, q).length);
+  if (!ok.length) return 'feat';
+  for (let tries = 0; tries < 2; tries++) {
+    if (!G.tq.length) { const s = [...GQ_ORDER].sort(() => Math.random() - 0.5); if (s[0] === G.lastQ) s.push(s.shift()); G.tq = s; }
+    const i = G.tq.findIndex(q => ok.includes(q) && q !== G.lastQ);
+    if (i >= 0) { const q = G.tq.splice(i, 1)[0]; G.lastQ = q; return q; }
+    G.tq = [];
+  }
+  const q = ok.find(x => x !== G.lastQ) || ok[0]; G.lastQ = q; return q;
+}
+function gBullets(e) {
+  const f = (e.gush || e.feat || []).slice(0, 5);   // optional hand-written card bullets win
+  if (f.length) return f;
+  if (e.t === 'sign') { const p = ((e.det || {}).pearls || []).slice(0, 4); return p.length ? p : [firstSentence(e.simple || e.formal)]; }
+  return [firstSentence(e.simple || e.formal)];
+}
+function gMeta(e) {
+  if (e.t === 'sign') return [(e.loc || []).slice(0, 3).map(locLabel).join(', ')].filter(Boolean).join(' · ');
+  if (e.cat === 'neuroscience') return NS_KIND[(e.ns || {}).kind] || 'Neuroscience';
+  return [(e.tempo || []).map(c => (D.meta.tempo && D.meta.tempo[c]) || c).join(' / '), (e.loc || []).slice(0, 3).map(locLabel).join(', ')].filter(Boolean).join(' · ');
+}
+function gTag(e, mode) { return mode === 'case' ? 'Case quiz' : e.t === 'sign' ? 'Sign' : e.cat === 'neuroscience' ? 'Neuroscience' : sysLabel((e.sys || ['disease'])[0]); }
+function gCardHTML(c, i) {   // front: name + question only (English); back: the answer to that question
+  const e = c.it.e, mode = c.mode, q = c.q || 'feat', L = mode === 'case' ? ['Diagnosis', 'What is the diagnosis?'] : (GQ[gKind(e)][q] || GQ.dx.feat);
+  let front;
+  if (mode === 'case') {
+    const k = e.case;
+    front = `<div class="gcase"><p><b>${esc(k.who || '')}</b></p><p>${esc(k.story || '')}</p>${k.exam ? `<p>${esc(k.exam)}</p>` : ''}</div><div class="gq">${e.cat === 'biomarker' ? 'Which antibody fits this picture?' : e.cat === 'pathogen' ? 'Which organism is it?' : L[1]}</div>`;
+  } else front = `<h2 class="gname">${esc(e.name)}</h2><div class="gq">${esc(L[1])}</div>`;
+  const ans = gAnswer(e, q);
+  const back = `<div class="gslow"${c.slow ? '' : ' hidden'}>Too slow!</div><h2 class="gname sm">${esc(e.name)}</h2><div class="gqlabel">${esc(L[0])}</div>
+    <ul class="gfeat">${ans.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
+    <a class="gmore" href="${link(e)}" data-gopen><span>Read the full page<small>${e.t === 'sign' ? 'technique, localisation, diseases' : e.cat === 'neuroscience' ? 'pathway, lesions, clinical correlation' : 'case, differentials, investigations, references'}</small></span><b aria-hidden="true">→</b></a>
+    <div class="ggrade"><button class="btn" data-ggrade="0" data-gi="${i}" title="Not sure (1)">Not sure</button><button class="btn primary" data-ggrade="1" data-gi="${i}" title="Gotcha! (2)">Gotcha!</button></div>`;
+  return `<section class="gslide" data-gi="${i}"><div class="gcard${c.flip ? ' flip' : ''}${c.graded != null ? ' graded' : ''}" data-gflip="${i}" data-gq="${mode === 'case' ? 'case' : q}" role="button" tabindex="0" aria-label="Flash card ${i + 1}, tap to flip">
+    <div class="gface gfront">${G.pace && !c.flip ? '<div class="ghurry" hidden>“Hurry up!”</div>' : ''}${front}<div class="ghint">${c.again ? '↻ coming back · ' : ''}Tap to flip</div>${G.pace && !c.flip ? `<div class="gtimer" aria-hidden="true"><i></i><b></b></div>` : ''}</div>
+    <div class="gface gback">${back}</div></div></section>`;
+}
+function gSummaryHTML() {
+  const n = G.cards.length - G.blockStart;
+  const k = G.cards.slice(G.blockStart).filter(c => c.graded === 1).length, u = G.cards.slice(G.blockStart).filter(c => c.graded === 0).length;
+  return `<section class="gslide gsum" id="gsum"><div class="gsumcard"><div class="gtag">Break point</div><h2>${n} cards reviewed</h2>
+    <p class="gbig"><span><b>${k}</b> Gotcha!</span><span><b>${u}</b> not sure</span><span><b>${n - k - u}</b> skipped</span></p>
+    <p class="muted">Deck complete. Carry on with a new deck or rest your eyes. Cards you were not sure about will come back.</p>
+    <div class="ggrade"><button class="btn" data-gstop>Take a break</button><button class="btn primary" data-gmore>${gCfg().every} more</button></div>
+    <p class="small muted">Today: ${G.seen} seen · ${G.known} Gotcha! · ${G.unsure} not sure</p></div></section>`;
+}
+function gEnsure() {   // keep three cards ready ahead of the current one; stop at the break point
+  const feed = $('#gfeed'); if (!feed) return;
+  const every = gCfg().every;
+  while (!G.gate && G.cards.length < G.cur + 4) {
+    if (G.cards.length - G.blockStart >= every) { G.gate = true; feed.insertAdjacentHTML('beforeend', gSummaryHTML()); break; }
+    const c = gPick(); if (!c) break;
+    G.cards.push(c); G.recent = [c.it.e.id, ...G.recent].slice(0, Math.min(20, Math.floor(G.pool.length / 2)));
+    feed.insertAdjacentHTML('beforeend', gCardHTML(c, G.cards.length - 1));
+  }
+  const s = $('#gsum'); if (s && G.gate) s.outerHTML = gSummaryHTML();
+  const p = $('#gprog'); if (p) p.textContent = `${Math.min(G.cur - G.blockStart + 1, every)} / ${every}`;
+}
+function gGrade(i, good) {
+  const c = G.cards[i]; if (!c) return;
+  const id = gKey(c.it.e), box = gBox();
+  if (c.graded == null) { if (good) G.known++; else G.unsure++; }
+  else { if (c.graded === 1) G.known--; else G.unsure--; if (good) G.known++; else G.unsure++; }
+  c.graded = good ? 1 : 0;
+  const b = good ? Math.min(5, ((box[id] || {}).b || 0) + 1) : 1;
+  box[id] = {b, due: Date.now() + [0, 0, 1, 3, 7, 21][b] * 864e5 - 6e4}; LS.set('gushBox', box);
+  if (!good && !G.pend.some(p => p.it === c.it)) G.pend.push({it: c.it, mode: c.mode, q: c.q, at: G.cards.length + 4 + Math.floor(Math.random() * 3)});
+  const el = document.querySelector(`.gcard[data-gflip="${i}"]`); if (el) el.classList.add('graded');
+  setTimeout(() => gGo(i + 1), 220);
+}
+function gGo(i) { const el = document.querySelector(`.gslide[data-gi="${i}"]`) || (i >= G.cards.length && $('#gsum')); if (el) el.scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }
+function gFlip(i) { const c = G.cards[i]; if (!c) return; if (G.tIdx === i) { gTimerStop(); c.timed = true; const t = document.querySelector(`.gcard[data-gflip="${i}"] .gtimer`); if (t) t.remove(); } c.flip = !c.flip; const el = document.querySelector(`.gcard[data-gflip="${i}"]`); if (el) el.classList.toggle('flip', c.flip); }
+// Pick up the pace: countdown on the front; at zero the card flips and shows "Too slow!"
+function gTimerStop() { clearInterval(G.tId); if (G.tIdx >= 0) { const c = G.cards[G.tIdx]; if (c && !c.flip && !c.slow) c.timed = false; } G.tId = 0; G.tIdx = -1; }   // a countdown cut short (card hidden) may run again
+function gTimerStart(i) {
+  if (!G.pace || G.tIdx === i) return;
+  gTimerStop();
+  const c = G.cards[i], card = document.querySelector(`.gcard[data-gflip="${i}"]`);
+  if (!c || c.flip || c.graded != null || c.timed || !card) return;
+  const box = card.querySelector('.gtimer'); if (!box) return;
+  const bar = box.querySelector('i'), num = box.querySelector('b'), end = Date.now() + G.pace * 1000;
+  c.timed = true; G.tIdx = i;
+  bar.style.transition = 'none'; bar.style.transform = 'scaleX(1)';
+  requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.transition = `transform ${G.pace}s linear`; bar.style.transform = 'scaleX(0)'; }));
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    num.textContent = left; box.classList.toggle('hurry', left <= 3);
+    const h = card.querySelector('.ghurry'); if (h) h.hidden = !(left <= 5 && left > 0 && G.pace > 5);
+    if (Date.now() >= end) {
+      gTimerStop(); c.slow = true;
+      const s = card.querySelector('.gslow'); if (s) s.hidden = false;
+      box.remove(); const h = card.querySelector('.ghurry'); if (h) h.remove(); c.flip = true; card.classList.add('flip');
+      if (navigator.vibrate) try { navigator.vibrate(60); } catch (e) {}
+    }
+  };
+  tick(); G.tId = setInterval(tick, 100);
+}
+function gushOpen() {
+  const cfg = gCfg(); G.pool = gPool(cfg);
+  if (!G.pool.length) { toast('No cards for this selection'); return false; }
+  gTimerStop(); G.pace = cfg.paceOn ? cfg.pace : 0;
+  Object.assign(G, {fam: new Set(), tq: [], lastQ: '', open: true, cards: [], cur: 0, pend: [], recent: [], seen: 0, known: 0, unsure: 0, blockStart: 0, gate: false});
+  let ov = $('#gush'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'gush'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-label', 'Gush flash cards');
+  ov.innerHTML = `<div class="gtop"><span class="gbrand">Gush!</span><span class="gprog" id="gprog"></span>${G.pace ? `<span class="gpacetag">⏱ ${G.pace} s</span>` : ''}<span class="sp"></span><a class="gset" href="#/gush" data-gclose aria-label="Change decks">Decks</a><button class="iconbtn gx" data-gclose aria-label="Close">×</button></div><div class="gfeed" id="gfeed"></div>`;
+  document.body.appendChild(ov); document.documentElement.classList.add('gushing');
+  const feed = $('#gfeed');
+  const io = new IntersectionObserver(es => { for (const x of es) if (x.isIntersecting && x.target.dataset.gi != null) { const i = +x.target.dataset.gi; if (i + 1 > G.seen) G.seen = i + 1; G.cur = i; gEnsure(); gTimerStart(i); } }, {root: feed, threshold: 0.6});
+  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1 && n.classList.contains('gslide')) io.observe(n); }))).observe(feed, {childList: true});
+  gEnsure();
+  ov.addEventListener('click', ev => {
+    const t = ev.target;
+    if (t.closest('[data-gclose]')) { ev.preventDefault(); gushClose(t.closest('a') ? '#/gush' : null); return; }
+    if (t.closest('[data-gopen]')) { gTimerStop(); ov.hidden = true; document.documentElement.classList.remove('gushing'); return; }   // keep the feed to come back to
+    const g = t.closest('[data-ggrade]'); if (g) { ev.stopPropagation(); gGrade(+g.dataset.gi, g.dataset.ggrade === '1'); return; }
+    if (t.closest('[data-gstop]')) { gushClose('#/'); return; }
+    if (t.closest('[data-gmore]')) { const s = $('#gsum'); G.fam = new Set(); G.blockStart = G.cards.length; G.gate = false; if (s) { s.removeAttribute('id'); s.classList.add('done'); } gEnsure(); gGo(G.blockStart); return; }
+    const f = t.closest('[data-gflip]'); if (f && !t.closest('a,button')) gFlip(+f.dataset.gflip);
+  });
+  ov.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { gushClose(null); return; }
+    if (ev.key === ' ' || ev.key === 'Enter') { if (!ev.target.closest('button,a')) { ev.preventDefault(); gFlip(G.cur); } }
+    else if (ev.key === 'ArrowDown' || ev.key === 'j') { ev.preventDefault(); gGo(G.cur + 1); }
+    else if (ev.key === 'ArrowUp' || ev.key === 'k') { ev.preventDefault(); gGo(G.cur - 1); }
+    else if (ev.key === '1') gGrade(G.cur, false); else if (ev.key === '2') gGrade(G.cur, true);
+  });
+  setTimeout(() => { const c = $('.gcard', ov); if (c) c.focus({preventScroll: true}); }, 50);
+  return true;
+}
+function gushClose(to, keep) {
+  gTimerStop();
+  const ov = $('#gush'); if (ov) ov.remove(); document.documentElement.classList.remove('gushing'); G.open = false;
+  if (keep) return;   // the link inside the card navigates on its own
+  if (route().view === 'gush' && route().arg === 'play') { if (to || !(window.__navI > 0)) location.replace(to || '#/gush'); else history.back(); }
+  else if (to) go(to);
+}
+function viewGush(arg) {
+  const cfg = gCfg(), groups = gGroups(), S = new Set(cfg.sys), n = gPool(cfg).length, box = gBox();
+  const known = Object.values(box).filter(b => b.b >= 4).length, unsure = Object.values(box).filter(b => b.b === 1).length;
+  return `<article class="entry gushset"><div class="ehead"><div class="crumb">Swipe to review</div><h1>Gush!</h1>
+    <p class="muted">Short flash cards you can swipe through like a feed: tap to flip, swipe up for the next one. Questions rotate between key features, pathophysiology, key investigations, clinical picture and treatment, and each deck holds only one disease from a family. Cards you are not sure about come back sooner. A break point appears every ${cfg.every} cards.</p></div>
+    <section class="card"><h3>Cards</h3><div class="gchecks">${GUSH_TYPES.map(([k, l, h]) => `<label class="gchk"><input type="checkbox" data-gtype="${k}"${cfg.types.includes(k) ? ' checked' : ''}><span><b>${l}</b><small>${h}</small></span></label>`).join('')}</div></section>
+    <section class="card"><h3>Groups <span class="faint small">${S.size ? S.size + ' selected' : 'all groups'}</span></h3>
+      <div class="actions" style="margin-bottom:10px"><button class="btn${S.size ? '' : ' on'}" data-gsysall>All groups</button>${S.size ? '<button class="btn ghost" data-gsysnone>Clear</button>' : ''}</div>
+      <div class="gchecks sys">${groups.map(([g, c]) => `<label class="gchk"><input type="checkbox" data-gsys="${esc(g)}"${S.has(g) ? ' checked' : ''}><span><b>${esc(sysLabel(g))}</b><small>${c}</small></span></label>`).join('')}</div></section>
+    <section class="card"><h3>Options</h3><label class="gchk wide"><input type="checkbox" data-gyellow${cfg.yellow ? ' checked' : ''}><span><b>Include 🟡 pages</b><small>pages still waiting for a disease-specific source (bullets may be thinner)</small></span></label>
+      <div class="gpace${cfg.paceOn ? ' on' : ''}"><label class="gchk wide"><input type="checkbox" data-gpace${cfg.paceOn ? ' checked' : ''}><span><b>⏱ Pick up the pace</b><small>countdown on every card — when time runs out the card flips by itself: Too slow!</small></span></label>
+        <div class="seg" role="group" aria-label="Seconds per card">${[6, 8, 10, 15, 18].map(v => `<button data-gpacesec="${v}" class="${cfg.pace === v ? 'on' : ''}"${cfg.paceOn ? '' : ' disabled'}>${v} s</button>`).join('')}</div></div>
+      <div class="actions" style="margin-top:10px"><span class="small muted">Break every</span><div class="seg">${[20, 25, 30].map(v => `<button data-gevery="${v}" class="${cfg.every === v ? 'on' : ''}">${v}</button>`).join('')}</div></div></section>
+    <div class="gstart"><button class="btn primary big" data-gstart${n ? '' : ' disabled'}>Start Gush! · ${n.toLocaleString()} cards${cfg.paceOn ? ` · ⏱ ${cfg.pace} s` : ''}</button>
+      <span class="small muted">On this device: ${known} known · ${unsure} not sure${Object.keys(box).length ? ` · <button class="linkbtn" data-greset>reset progress</button>` : ''}</span></div>
+    <div class="foot"><div>Progress is stored only on this device. For education only — not a diagnostic tool.</div></div></article>`;
+}
+function gushEvents() {
+  document.addEventListener('change', ev => {
+    const t = ev.target; if (!t.closest || !t.closest('.gushset')) return;
+    const cfg = gCfg();
+    if (t.dataset.gtype) { const s = new Set(cfg.types); t.checked ? s.add(t.dataset.gtype) : s.delete(t.dataset.gtype); cfg.types = GUSH_TYPES.map(x => x[0]).filter(k => s.has(k)); }
+    else if (t.dataset.gsys) { const s = new Set(cfg.sys); t.checked ? s.add(t.dataset.gsys) : s.delete(t.dataset.gsys); cfg.sys = [...s]; }
+    else if ('gyellow' in t.dataset) cfg.yellow = t.checked;
+    else if ('gpace' in t.dataset) cfg.paceOn = t.checked;
+    else return;
+    LS.set('gushCfg', cfg); const y = window.scrollY; render(); window.scrollTo(0, y);
+  });
+  document.addEventListener('click', ev => {
+    const t = ev.target.closest('button'); if (!t || !t.closest('.gushset')) return;
+    const cfg = gCfg(), d = t.dataset;
+    if ('gstart' in d) { if (gushOpen()) location.hash = '#/gush/play'; return; }
+    if ('gsysall' in d || 'gsysnone' in d) cfg.sys = [];
+    else if (d.gevery) cfg.every = +d.gevery;
+    else if (d.gpacesec) { cfg.pace = +d.gpacesec; cfg.paceOn = true; }
+    else if ('greset' in d) { if (!confirmReset()) return; LS.set('gushBox', {}); }
+    else return;
+    LS.set('gushCfg', cfg); const y = window.scrollY; render(); window.scrollTo(0, y);
+  });
+}
+function confirmReset() { const b = $('[data-greset]'); if (b && b.dataset.armed) return true; if (b) { b.dataset.armed = 1; b.textContent = 'tap again to reset'; } return false; }
+function gushRoute(view, arg) {   // called from render(): show, restore or drop the overlay to match the URL
+  const ov = $('#gush');
+  if (view === 'gush' && arg === 'play') {
+    if (ov && ov.hidden) { ov.hidden = false; document.documentElement.classList.add('gushing'); G.open = true; setTimeout(() => { gGo(G.cur); gTimerStart(G.cur); }, 0); }
+    else if (!ov && !gushOpen()) location.replace('#/gush');
+  } else if (ov && !ov.hidden) { ov.remove(); document.documentElement.classList.remove('gushing'); G.open = false; }
+  else if (ov && ov.hidden && view === 'gush') { ov.remove(); G.open = false; }
+}
 // ------------------------------------------------------------ views
 function viewHome() {
   const cur = D.dx.filter(d => d.cur);
@@ -864,6 +1165,7 @@ function viewAbout() {
 function setTabs(view) {
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.v === view));
   const ib = $('.iconbtn[data-v=about]'); if (ib) ib.classList.toggle('on', view === 'about');
+  const gb = $('.gushbtn'); if (gb) gb.classList.toggle('on', view === 'gush');
   const n = $('.nav a[data-v=compare] .n'); if (n) n.textContent = state.cmp.length || '';
   const f = $('.nav a[data-v=saved] .n'); if (f) f.textContent = state.fav.length || '';
   const s = $('.nav a[data-v=home]'); if (s) s.setAttribute('href', state.q ? '#/q/' + encodeURIComponent(state.q) : '#/');
@@ -902,12 +1204,14 @@ function render() {
   else if (view === 'install') { html = viewInstall(); setTabs('about'); }
   else if (view === 'article') { html = viewArticle(arg); setTabs(''); }
   else if (view === 'quiz') { html = viewQuiz(); setTabs('quiz'); }
+  else if (view === 'gush') { html = viewGush(arg); setTabs('gush'); }
   else if (view === 'added') { html = viewAdded(arg); setTabs(''); if (arg && arg !== 'all') after = () => { const el = document.getElementById(arg); if (el) el.scrollIntoView(); }; }
   else html = viewHome();
   if (!(view === 'sign' || view === 'dx')) document.title = 'Sanctum of Neurology';
   if (view !== 'q' && view !== 'home') { $('#q').value = ''; if (document.activeElement === $('#q')) $('#q').blur(); }   // the query stays behind the Search tab
   { const c = $('#qclear'); if (c) c.hidden = !$('#q').value; }
   main.innerHTML = html;
+  gushRoute(view, arg);
   const key = location.hash;
   if (scrollMemo.has(key) && (view === 'q' || view === 'browse' || view === 'saved' || view === 'home')) window.scrollTo(0, scrollMemo.get(key));
   else if (view !== 'q') window.scrollTo(0, 0);
@@ -971,7 +1275,7 @@ function wire() {
   });
   $('#qclear').onclick = () => { q.value = ''; state.q = ''; go('#/'); q.focus(); };
   document.addEventListener('keydown', ev => {
-    if (ev.key === '/' && document.activeElement !== q && !/input|textarea/i.test(document.activeElement.tagName)) { ev.preventDefault(); q.focus(); q.select(); }
+    if (ev.key === '/' && !G.open && document.activeElement !== q && !/input|textarea/i.test(document.activeElement.tagName)) { ev.preventDefault(); q.focus(); q.select(); }
   });
   window.addEventListener('scroll', () => { scrollMemo.set(location.hash, window.scrollY); }, {passive: true});
   document.addEventListener('toggle', ev => { if (ev.target.closest && ev.target.closest('.summary')) LS.set('sumOpen', ev.target.open); }, true);
@@ -989,6 +1293,7 @@ function wire() {
   $('#navfwd').onclick = () => history.forward();
   document.addEventListener('keydown', ev => { if (ev.altKey && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') && !/input|textarea/i.test(document.activeElement.tagName)) { ev.preventDefault(); ev.key === 'ArrowLeft' ? history.back() : history.forward(); } });
   window.addEventListener('hashchange', () => { render(); navSync(); });
+  gushEvents();
   navSync();
   document.addEventListener('change', ev => { if (ev.target.id === 'qzsys') { QZ.sys = ev.target.value; LS.set('qzSys', QZ.sys); QZ.cur = null; render(); } });
   document.addEventListener('click', async ev => {
@@ -1249,7 +1554,7 @@ async function boot() {
   // while the app stays open: re-check every 6 hours when online
   setInterval(() => { if (navigator.onLine) checkUpdate(false); }, 30 * 60e3);   // lexicon: every 30 min while open
   document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) checkUpdate(false); });
-  window.__sanctum = {search, norm, D: () => D, extractEntities, knownInLexicon, sync, refreshAlarm};
+  window.__sanctum = {search, norm, D: () => D, extractEntities, knownInLexicon, sync, refreshAlarm, gush: {G, gFam, GQ, gKind, gEligible}};
 }
 boot();
 })();
