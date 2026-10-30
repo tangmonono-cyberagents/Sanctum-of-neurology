@@ -496,3 +496,58 @@ table.nsles th,table.nsles td{overflow-wrap:anywhere;hyphens:auto}
 @media (max-width:480px){table.nsles{font-size:13.5px}table.nsles th,table.nsles td{padding:6px 7px}}
 .qzsel{min-width:0;max-width:100%}
 .qzsel select{max-width:min(62vw,280px);text-overflow:ellipsis}
+
+/* ============ Cloze it (v0.40) — active recall: key words become blanks ============ */
+:root{--cz-mask:#3a4049;--cz-mask-h:#4b525c;--cz-ease:cubic-bezier(.22,1,.36,1);--cz-dur:560ms;
+  --cz-disease:#1f5f8b;--cz-feature:#9a5b00;--cz-investigation:#0f6b6b;--cz-treatment:#22603c}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--cz-mask:#c5ccd4;--cz-mask-h:#dde2e8;--cz-disease:#8cb8da;--cz-feature:#e3b56a;--cz-investigation:#6fc9c4;--cz-treatment:#7fc79a}}
+:root[data-theme="dark"]{--cz-mask:#c5ccd4;--cz-mask-h:#dde2e8;--cz-disease:#8cb8da;--cz-feature:#e3b56a;--cz-investigation:#6fc9c4;--cz-treatment:#7fc79a}
+/* header switch next to Gush! */
+.czsw{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px 0 7px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px;font-weight:650;white-space:nowrap;flex:none;cursor:pointer;transition:border-color .22s ease,background-color .22s ease}
+.czsw__track{position:relative;width:34px;height:20px;border-radius:999px;background:color-mix(in srgb,var(--mute) 38%,transparent);transition:background-color .26s var(--cz-ease)}
+.czsw__thumb{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .3s var(--cz-ease),width .18s ease}
+.czsw:active .czsw__thumb{width:18px}
+.czsw[aria-checked="true"]{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));background:var(--accent-soft)}
+.czsw[aria-checked="true"] .czsw__track{background:var(--accent)}
+.czsw[aria-checked="true"] .czsw__thumb{transform:translateX(14px)}
+.czsw[aria-checked="true"]:active .czsw__thumb{transform:translateX(10px)}
+.czsw:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:1320px){.czsw__lbl{display:none}.czsw{padding:0 7px}}
+@media (max-width:760px){.czsw{height:34px}}
+/* the blank */
+.cz{display:inline;font:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;border:0;margin:0 -.06em;padding:.04em .18em;border-radius:.34em;cursor:pointer;-webkit-tap-highlight-color:transparent;-webkit-box-decoration-break:clone;box-decoration-break:clone;
+  background:linear-gradient(var(--cz-mask),var(--cz-mask)) no-repeat right center/100% 100%;background-color:transparent;
+  transition:background-size var(--cz-dur) var(--cz-ease),background-color var(--cz-dur) var(--cz-ease),box-shadow .2s ease}
+.cz[data-type="disease"]{--cz-c:var(--cz-disease)}.cz[data-type="feature"]{--cz-c:var(--cz-feature)}.cz[data-type="investigation"]{--cz-c:var(--cz-investigation)}.cz[data-type="treatment"]{--cz-c:var(--cz-treatment)}
+.cz__t{opacity:0;filter:blur(6px);user-select:none;transition:opacity calc(var(--cz-dur)*.8) var(--cz-ease) 90ms,filter var(--cz-dur) var(--cz-ease) 60ms,color .3s ease}
+@media (hover:hover){.cz[data-state="hidden"]:hover{background-image:linear-gradient(var(--cz-mask-h),var(--cz-mask-h))}}
+.cz:active[data-state="hidden"]:not(.peeking){background-size:96% 100%}
+.cz:focus-visible{outline:none;box-shadow:0 0 0 2px var(--surface),0 0 0 4px color-mix(in srgb,var(--cz-c) 70%,transparent)}
+.cz[data-state="revealed"]{background-size:0% 100%;background-color:color-mix(in srgb,var(--cz-c) 13%,transparent)}
+.cz[data-state="revealed"] .cz__t{opacity:1;filter:blur(0);color:color-mix(in srgb,var(--cz-c) 80%,var(--ink));user-select:text}
+@media (prefers-reduced-motion:reduce){.cz,.cz__t,.czsw__thumb,.czsw__track{transition-duration:1ms!important;transition-delay:0ms!important}.cz__t{filter:none}}
+/* progress bar on the page */
+.czbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:12px 0 4px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:12px;background:var(--accent-soft);font-size:14px;color:var(--mute)}
+.czbar__lbl{font-weight:700;color:var(--accent)}
+.czbar__track{position:relative;width:110px;height:6px;border-radius:6px;background:color-mix(in srgb,var(--mute) 22%,transparent);overflow:hidden}
+.czbar__track i{position:absolute;inset:0;border-radius:inherit;background:var(--accent);transform-origin:left;transform:scaleX(var(--p,0));transition:transform .42s var(--cz-ease)}
+.czbar__n{font-variant-numeric:tabular-nums;white-space:nowrap}
+.czbar__btn{border:0;background:none;padding:4px 2px;font:inherit;font-weight:650;color:var(--accent);cursor:pointer;white-space:nowrap}
+.czbar__btn:disabled{color:var(--mute);opacity:.55;cursor:default}
+.czbar__acts{display:inline-flex;gap:14px;margin-left:auto}
+.czbar__track{flex:1 1 60px;max-width:160px}
+@media (max-width:760px){.czsw{border-color:transparent;background:none;padding:0 2px;height:34px}.czsw[aria-checked="true"]{background:none;border-color:transparent}}
+@media (max-width:430px){#navfwd{display:none}}
+
+/* Cloze it — peek / peel (hold a blank to lift the cover; drag right to peel it) */
+.cz{touch-action:pan-y;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.cz.peeking[data-state],.cz.peeking[data-state]:active,.cz.peeking[data-state]:hover{transition:background-size .14s ease-out;
+  background-image:linear-gradient(90deg,rgba(0,0,0,.22),rgba(0,0,0,0)),linear-gradient(90deg,rgba(255,255,255,.34),rgba(255,255,255,0)),linear-gradient(var(--cz-mask),var(--cz-mask));
+  background-repeat:no-repeat;background-position:calc(var(--pk,0)*100%) center,calc(var(--pk,0)*100%) center,right center;
+  background-size:5px 100%,18px 100%,calc((1 - var(--pk,0))*100%) 100%;
+  background-color:color-mix(in srgb,var(--cz-c) 10%,transparent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--cz-c) 25%,transparent)}
+.cz.peeking[data-state] .cz__t{opacity:1;filter:blur(0);transition:opacity .12s ease,filter .12s ease;color:color-mix(in srgb,var(--cz-c) 80%,var(--ink));
+  -webkit-mask-image:linear-gradient(90deg,#000 calc(var(--pk,0)*100%),transparent calc(var(--pk,0)*100% + 8%));
+  mask-image:linear-gradient(90deg,#000 calc(var(--pk,0)*100%),transparent calc(var(--pk,0)*100% + 8%))}
+@media (hover:hover){.cz[data-state="hidden"]:not(.peeking):hover{background-size:97% 100%}}

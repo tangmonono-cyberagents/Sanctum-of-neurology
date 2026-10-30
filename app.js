@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.39';
+const APP_VERSION = '0.41';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -1216,6 +1216,7 @@ function render() {
   if (scrollMemo.has(key) && (view === 'q' || view === 'browse' || view === 'saved' || view === 'home')) window.scrollTo(0, scrollMemo.get(key));
   else if (view !== 'q') window.scrollTo(0, 0);
   if (after) after();
+  clozeApply(view);
 }
 function toast(msg) {
   const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
@@ -1535,6 +1536,7 @@ async function viewNew() {
 // ------------------------------------------------------------ boot
 async function boot() {
   applyTheme();
+  clozeSwitch();
   handleQueryString();
   try { prepare(await loadData()); }
   catch (e) { $('#main').innerHTML = `<p class="empty">Could not load the lexicon (${esc(e.message)}). If you opened index.html directly from disk, use the single-file build or serve the folder over http.</p>`; return; }
@@ -1556,5 +1558,111 @@ async function boot() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) checkUpdate(false); });
   window.__sanctum = {search, norm, D: () => D, extractEntities, knownInLexicon, sync, refreshAlarm, gush: {G, gFam, GQ, gKind, gEligible}};
 }
+// ------------------------------------------------------------ Cloze it
+// Active-recall mode: key words on disease and sign pages become blanks; tap one blank to reveal only that word.
+// The words are NOT guessed here: build.py (tools/cloze_terms.py) stores the exact strings per entry in e.cz
+// {d: disease names, f: features, i: investigations, t: treatments}; this code only finds those listed strings.
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const CZ_TYPE = {d: 'disease', f: 'feature', i: 'investigation', t: 'treatment'};
+const CZ_SEL = '.entry .def, .entry .list li, .entry .prose, .entry .thd, .entry .case dd, .entry .case .q, .entry .case .a, .entry .ddx .pt';
+const CZ_SKIP = 'a, button, h1, h2, h3, .bd, .chips, .foot, .readmore, .small, .opts, .cz';
+let clozeOn = LS.get('cloze', false) === true;          // default OFF
+function clozeSwitch() {
+  const b = $('#czsw'); if (!b) return;
+  b.setAttribute('aria-checked', String(clozeOn));
+  b.classList.toggle('on', clozeOn);
+}
+function clozeTerms(e) {
+  const out = [];
+  for (const k of ['d', 'f', 'i', 't']) for (const t of ((e.cz || {})[k] || [])) if (t && t.length >= 2) out.push([t, k]);
+  return out.sort((a, b) => b[0].length - a[0].length);
+}
+function clozeApply(view) {
+  const bar = $('#czbar'); if (bar) bar.remove();
+  if (!clozeOn || !(view === 'dx' || view === 'sign')) return;
+  const e = byId.get(route().arg); if (!e) return;
+  const terms = clozeTerms(e); if (!terms.length) return;
+  const kind = new Map(terms.map(([t, k]) => [t.toLowerCase(), [t, k]]));
+  const lit = terms.map(([t]) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const rx = new RegExp(`(?<![\\w-])(?:${lit.join('|')})(?![\\w-])`, 'gi');
+  let n = 0;
+  document.querySelectorAll(CZ_SEL).forEach(root => {
+    if (root.closest(CZ_SKIP)) return;
+    const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {acceptNode: t => t.parentElement.closest(CZ_SKIP) && t.parentElement.closest(CZ_SKIP) !== root.closest(CZ_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT});
+    const nodes = []; while (tw.nextNode()) nodes.push(tw.currentNode);
+    for (const tn of nodes) {
+      if (tn.parentElement.closest(CZ_SKIP)) continue;
+      const txt = tn.nodeValue; rx.lastIndex = 0;
+      let m, last = 0, frag = null;
+      while ((m = rx.exec(txt))) {
+        const hit = kind.get(m[0].toLowerCase());
+        if (!hit || (hit[0].length <= 4 && m[0] !== hit[0])) continue;   // short abbreviations: exact case only (MG ≠ mg)
+        frag = frag || document.createDocumentFragment();
+        if (m.index > last) frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'cz'; b.dataset.type = CZ_TYPE[hit[1]]; b.dataset.state = 'hidden';
+        b.setAttribute('aria-pressed', 'false'); b.setAttribute('aria-label', `Hidden ${CZ_TYPE[hit[1]]}. Press to reveal.`);
+        const sp = document.createElement('span'); sp.className = 'cz__t'; sp.textContent = m[0]; sp.setAttribute('aria-hidden', 'true');
+        b.appendChild(sp); frag.appendChild(b); n++; last = m.index + m[0].length;
+      }
+      if (frag) { if (last < txt.length) frag.appendChild(document.createTextNode(txt.slice(last))); tn.parentNode.replaceChild(frag, tn); }
+    }
+  });
+  if (!n) return;
+  const anchor = $('.entry .toolrow'); if (!anchor) return;
+  const el = document.createElement('div'); el.id = 'czbar'; el.className = 'czbar'; el.setAttribute('aria-live', 'polite');
+  el.innerHTML = `<span class="czbar__lbl">Cloze it</span><span class="czbar__track"><i style="--p:0"></i></span><span class="czbar__n" data-czn>0 / ${n}</span><span class="czbar__acts"><button type="button" class="czbar__btn" data-czall>Reveal all</button><button type="button" class="czbar__btn" data-czhide disabled>Hide all</button></span>`;
+  anchor.insertAdjacentElement('afterend', el);
+}
+function clozeCount() {
+  const all = $$('#main .cz'), shown = all.filter(b => b.dataset.state === 'revealed').length;
+  const n = $('[data-czn]'); if (!n) return;
+  n.textContent = `${shown} / ${all.length}`;
+  $('#czbar i').style.setProperty('--p', all.length ? shown / all.length : 0);
+  $('[data-czhide]').disabled = !shown; $('[data-czall]').disabled = shown === all.length;
+}
+function clozeSet(b, on) {
+  b.dataset.state = on ? 'revealed' : 'hidden'; b.setAttribute('aria-pressed', String(on));
+  b.setAttribute('aria-label', on ? `${b.textContent} (${b.dataset.type}). Press to hide again.` : `Hidden ${b.dataset.type}. Press to reveal.`);
+}
+// "Peek": press and hold a blank to lift the cover a little; drag sideways to peel it further.
+// Let go and it falls back — unless you peeled it almost all the way, then the word stays revealed.
+const czPeek = {el: null, x0: 0, y0: 0, w: 1, timer: 0, on: false, swallow: false};
+function czPeekSet(el, p) { el.style.setProperty('--pk', Math.max(0, Math.min(1, p)).toFixed(3)); }
+function czPeekEnd(keep) {
+  const P = czPeek, el = P.el; clearTimeout(P.timer); P.el = null;
+  if (!el || !P.on) return;
+  P.on = false; P.swallow = true; setTimeout(() => { P.swallow = false; }, 400);   // the click that follows a peek is not a tap
+  const pk = parseFloat(el.style.getPropertyValue('--pk')) || 0;
+  el.classList.remove('peeking');
+  if (keep && pk >= 0.8) { clozeSet(el, true); clozeCount(); }
+  el.style.removeProperty('--pk');
+}
+document.addEventListener('pointerdown', ev => {
+  const el = ev.target.closest('#main .cz[data-state="hidden"]'); if (!el || ev.button > 0) return;
+  const P = czPeek; P.el = el; P.x0 = ev.clientX; P.y0 = ev.clientY; P.w = Math.max(40, el.getBoundingClientRect().width); P.on = false;
+  P.timer = setTimeout(() => { if (P.el !== el) return; P.on = true; el.classList.add('peeking'); czPeekSet(el, .38); try { navigator.vibrate && navigator.vibrate(8); } catch (e) {} }, 220);
+});
+document.addEventListener('pointermove', ev => {
+  const P = czPeek, el = P.el; if (!el) return;
+  const dx = ev.clientX - P.x0, dy = ev.clientY - P.y0;
+  if (!P.on) {
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { clearTimeout(P.timer); P.el = null; return; }   // the user is scrolling
+    if (dx > 6) { clearTimeout(P.timer); P.on = true; el.classList.add('peeking'); }
+    else return;
+  }
+  czPeekSet(el, Math.max(.38 * (dx < 6 ? 1 : 0), dx / P.w));
+});
+document.addEventListener('pointerup', () => czPeekEnd(true));
+document.addEventListener('pointercancel', () => czPeekEnd(false));
+document.addEventListener('contextmenu', ev => { if (ev.target.closest('#main .cz')) ev.preventDefault(); });
+document.addEventListener('click', ev => {
+  const t = ev.target;
+  if (t.closest('#czsw')) { clozeOn = !clozeOn; LS.set('cloze', clozeOn); clozeSwitch(); const y = window.scrollY; render(); window.scrollTo(0, y); toast(clozeOn ? 'Cloze it on — tap a blank to reveal it' : 'Cloze it off'); return; }
+  const b = t.closest('#main .cz');
+  if (b) { ev.preventDefault(); if (czPeek.swallow) { czPeek.swallow = false; return; } clozeSet(b, b.dataset.state !== 'revealed'); clozeCount(); return; }
+  if (t.closest('[data-czall]')) { $$('#main .cz').forEach(x => clozeSet(x, true)); clozeCount(); return; }
+  if (t.closest('[data-czhide]')) { $$('#main .cz').forEach(x => clozeSet(x, false)); clozeCount(); }
+});
 boot();
 })();
