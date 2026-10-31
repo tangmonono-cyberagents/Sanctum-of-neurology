@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.45';
+const APP_VERSION = '0.47';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -1057,6 +1057,11 @@ function groupCounts(field) {
 }
 // Shadow a book: every page that cites a given book, grouped by the chapter / section it points to
 let SHADOW = null;
+// A Read entry may cite several chapters/cases ("Case 1 …; Case 21 …"): give each its own group so diseases sharing a case sit together.
+function shParts(w) {
+  w = (w || '').trim();
+  return w ? w.split(/\s*;\s*(?=(?:Case|Chapter|Ch\.?|Section|Part|Topic|บทที่)\s*\d)/i).map(x => x.trim()).filter(Boolean) : [''];
+}
 function shadowIndex() {
   if (SHADOW) return SHADOW;
   SHADOW = new Map();
@@ -1067,7 +1072,8 @@ function shadowIndex() {
       if (!r.book || seen.has(k)) continue; seen.add(k);
       if (!SHADOW.has(r.book)) SHADOW.set(r.book, {refs: [], pages: new Set(), direct: new Set()});
       const s = SHADOW.get(r.book);
-      s.refs.push({e, where: (r.where || '').trim(), auto: !!r.auto}); s.pages.add(e.id); if (!r.auto) s.direct.add(e.id);
+      for (const w of shParts(r.where)) s.refs.push({e, where: w, auto: !!r.auto});
+      s.pages.add(e.id); if (!r.auto) s.direct.add(e.id);
     }
   }
   return SHADOW;
