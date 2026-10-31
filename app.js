@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.41';
+const APP_VERSION = '0.45';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -877,7 +877,7 @@ function viewSign(e) {
 function bookRef(r) {
   const b = D.meta.books[r.book] || {title: r.book};
   const u = safeUrl(r.url);
-  return `<li><b>${esc(b.title)}</b>${b.edition ? `, ${esc(b.edition)}` : ''}${b.publisher ? `. ${esc(b.publisher)}` : ''}${r.where ? ` — ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(r.where)} ↗</a>` : esc(r.where)}` : ''}${r.auto ? ' <span class="st auto" title="Found by scanning the books in the library">also covered</span>' : ''}</li>`;
+  return `<li><b>${esc(b.title)}</b>${b.edition ? `, ${esc(b.edition)}` : ''}${b.publisher ? `. ${esc(b.publisher)}` : ''}${r.where ? ` — ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(r.where)} ↗</a>` : esc(r.where)}` : ''}${r.auto ? ' <span class="st auto" title="Found by scanning the books in the library">also covered</span>' : ''} <a class="shlink" href="#/browse/shadow/${encodeURIComponent(r.book)}" title="See every page that uses this book, by chapter">Shadow</a></li>`;
 }
 
 // biomarker pages that a disease page mentions (by antibody short name) or that point to it
@@ -1055,12 +1055,67 @@ function groupCounts(field) {
   for (const d of D.dx) for (const k of d[field] || []) m.set(k, (m.get(k) || 0) + 1);
   return m;
 }
+// Shadow a book: every page that cites a given book, grouped by the chapter / section it points to
+let SHADOW = null;
+function shadowIndex() {
+  if (SHADOW) return SHADOW;
+  SHADOW = new Map();
+  for (const e of [...D.dx, ...D.ns]) {
+    const seen = new Set();
+    for (const r of e.read || []) {
+      const k = r.book + '|' + (r.where || '') + '|' + (r.auto ? 1 : 0);
+      if (!r.book || seen.has(k)) continue; seen.add(k);
+      if (!SHADOW.has(r.book)) SHADOW.set(r.book, {refs: [], pages: new Set(), direct: new Set()});
+      const s = SHADOW.get(r.book);
+      s.refs.push({e, where: (r.where || '').trim(), auto: !!r.auto}); s.pages.add(e.id); if (!r.auto) s.direct.add(e.id);
+    }
+  }
+  return SHADOW;
+}
+const shadowPins = () => LS.get('shadowBooks', []).filter(k => shadowIndex().has(k));
+function shadowList(v) {
+  const q = (v || '').trim().toLowerCase();
+  const rows = [...shadowIndex().entries()].map(([k, s]) => ({k, s, b: D.meta.books[k] || {}}))
+    .filter(x => !q || [x.k, x.b.short, x.b.title, x.b.publisher].some(t => (t || '').toLowerCase().includes(q)))
+    .sort((a, b) => b.s.pages.size - a.s.pages.size || (a.b.short || a.k).localeCompare(b.b.short || b.k));
+  return rows.length ? `<div class="groups shbooks">${rows.map(x => `<a href="#/browse/shadow/${encodeURIComponent(x.k)}"><span>${esc(x.b.short || x.b.title || x.k)}${x.b.edition ? ` <span class="faint small">${esc(x.b.edition)}</span>` : ''}</span><span class="c" title="${x.s.direct.size} cited directly · ${x.s.pages.size} pages in all">${x.s.pages.size}</span></a>`).join('')}</div>` : '<p class="empty">No book matches.</p>';
+}
+function viewShadow(key) {
+  const idx = shadowIndex();
+  if (!key) {
+    return `<div class="shadowintro"><span class="shtag">Shadow</span> <span class="small muted">Pick a book that the lexicon uses as a reference. Its pages appear grouped by chapter, so you can read the book alongside the lexicon and see which diseases it covers. The book is then added to Browse as a grey <b>Shadow</b> tab.</span></div>
+      <input id="shq" class="shq" type="search" placeholder="Search a reference book… (${idx.size} books)" autocomplete="off" aria-label="Search reference books">
+      <div id="shlist">${shadowList('')}</div>`;
+  }
+  const s = idx.get(key), b = D.meta.books[key] || {};
+  if (!s) return `<p class="empty">This book is not cited by any page.</p><p><a href="#/browse/shadow">Choose another book</a></p>`;
+  const groups = new Map();
+  for (const r of s.refs) { const g = r.where || ''; if (!groups.has(g)) groups.set(g, new Map()); const gm = groups.get(g); if (!gm.has(r.e.id) || !r.auto) gm.set(r.e.id, r); }
+  const named = [...groups.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+  const row = r => `<li><a href="${link(r.e)}">${stDot(r.e)}${esc(r.e.name)}</a>${r.auto ? ' <span class="st auto" title="Found by scanning the book">also covered</span>' : ''}</li>`;
+  const sortR = m => [...m.values()].sort((a, b) => (a.auto - b.auto) || a.e.name.localeCompare(b.e.name));
+  const loose = groups.get('');
+  return `<section class="shadowbox">
+      <div class="shhead"><span class="shtag">Shadow</span><a class="small" href="#/browse/shadow">Choose another book</a></div>
+      <h3 class="shtitle">${esc(b.title || b.short || key)}</h3>
+      <p class="small muted" style="margin:2px 0 8px">${[b.edition, b.publisher].filter(Boolean).map(esc).join(' · ')}</p>
+      <p class="small" style="margin:0"><b>${s.pages.size}</b> pages use this book — <b>${s.direct.size}</b> cite it directly${s.pages.size > s.direct.size ? `, ${s.pages.size - s.direct.size} more were found by scanning its text` : ''} · <b>${named.length}</b> chapters / sections</p>
+      <div class="actions" style="margin-top:10px"><button class="btn ghost" data-shunpin="${esc(key)}">Remove from Browse</button></div>
+    </section>
+    ${named.length > 6 ? `<details class="shtoc"><summary>Chapters in this book (${named.length})</summary><ol class="small">${named.map((g, i) => `<li><a href="#" data-jump="sh-${i}">${esc(g)}</a> <span class="faint">${groups.get(g).size}</span></li>`).join('')}</ol></details>` : ''}
+    ${named.map((g, i) => `<h3 class="sec shsec" id="sh-${i}">${esc(g)} <span class="count">${groups.get(g).size}</span></h3><ul class="plain">${sortR(groups.get(g)).map(row).join('')}</ul>`).join('')}
+    ${loose ? `<details class="shloose"><summary>Pages without a chapter reference <span class="count">${loose.size}</span></summary><ul class="plain">${sortR(loose).map(row).join('')}</ul></details>` : ''}`;
+}
 function viewBrowse(arg) {
-  const [mode, key] = arg.split('/');
-  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['bm', 'Biomarkers'], ['pg', 'Pathogens'], ['ns', 'Neuroscience'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡']];
+  const [mode, rawKey] = arg.split('/');
+  const key = rawKey ? decodeURIComponent(rawKey) : rawKey;
+  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['bm', 'Biomarkers'], ['pg', 'Pathogens'], ['ns', 'Neuroscience'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡'], ['shadow', 'Shadow a book']];
   const m = mode || 'sys';
+  if (m === 'shadow' && key && shadowIndex().has(key)) { const p = LS.get('shadowBooks', []); if (!p.includes(key)) LS.set('shadowBooks', [...p, key]); }
   let body = '';
-  const nav = `<div class="seg">${modes.map(([k, l]) => `<button data-browse="${k}" class="${m === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+  const pins = shadowPins();
+  const nav = `<div class="seg">${modes.map(([k, l]) => `<button data-browse="${k}" class="${m === k && !(k === 'shadow' && key) ? 'on' : ''}${k === 'shadow' ? ' shpick' : ''}">${l}</button>`).join('')}${pins.map(k => { const sh = (D.meta.books[k] || {}).short || k; return `<span class="shwrap${m === 'shadow' && key === k ? ' on' : ''}"><button class="shadow" data-go="#/browse/shadow/${encodeURIComponent(k)}" title="${esc((D.meta.books[k] || {}).title || k)}">Shadow · ${esc(sh.slice(0, 30))}${sh.length > 30 ? '…' : ''}</button><button class="shx" data-shunpin="${esc(k)}" aria-label="Remove this book from Browse" title="Remove this book — then pick another">×</button></span>`; }).join('')}</div>`;
+  if (m === 'shadow') return `<h2 class="sec">Browse</h2>${nav}${viewShadow(key)}`;
   const list = (arr) => `<ul class="plain">${arr.map(e => `<li><a href="${link(e)}">${stDot(e)}${esc(e.name)}</a>${e.cur ? '<span class="st cur">curated</span>' : ''}</li>`).join('')}</ul>`;
   if ((m === 'sys' || m === 'loc' || m === 'tempo') && key) {
     const label = m === 'sys' ? sysLabel(key) : m === 'loc' ? locLabel(key) : key;
@@ -1325,6 +1380,7 @@ function wire() {
     else if (d.qzpick) { if (!QZ.done) { QZ.done = true; QZ.picked = d.qzpick; QZ.n++; const ok = d.qzpick === QZ.cur.id; if (ok) QZ.ok++; qzGrade(QZ.cur.id, ok); render(); } }
     else if ('reveal' in d) { const a = t.nextElementSibling; a.hidden = !a.hidden; t.textContent = a.hidden ? 'Show answer' : 'Hide answer'; }
     else if (d.copy) { try { await navigator.clipboard.writeText(d.copy); toast('Copied'); } catch (e) { toast(d.copy); } }
+    else if (d.shunpin) { LS.set('shadowBooks', LS.get('shadowBooks', []).filter(x => x !== d.shunpin)); toast('Book removed — choose another'); go('#/browse/shadow'); }
     else if (d.browse) go('#/browse/' + d.browse);
     else if ('clearhist' in d) { state.hist = []; saveState(); render(); }
     else if ('update' in d) { state.source = $('#src').value.trim(); saveState(); checkUpdate(true); }
@@ -1352,6 +1408,7 @@ function wire() {
     else if (d.syncsrc) { const cur = sync.sources(); LS.set('syncSrc', cur.includes(d.syncsrc) ? cur.filter(x => x !== d.syncsrc) : [...cur, d.syncsrc]); render(); }
   });
   document.addEventListener('input', ev => {
+    if (ev.target.id === 'shq') { $('#shlist').innerHTML = shadowList(ev.target.value); return; }
     if (ev.target.id !== 'cmpq') return;
     const box = $('#cmpres'); const v = ev.target.value.trim();
     if (!v) { box.hidden = true; return; }
