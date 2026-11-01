@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/34233033/README.md)
 # Sanctum of Neurology
 
 **English** · [ภาษาไทย](README.th.md)
