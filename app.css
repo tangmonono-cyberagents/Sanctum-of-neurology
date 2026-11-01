@@ -644,3 +644,16 @@ html[data-layout="max"] ul.list li{margin:2px 0}
 html[data-layout="max"] .prose,html[data-layout="max"] .case,html[data-layout="max"] .ddx{max-width:none}
 html[data-layout="max"] .ddx li{padding:7px 12px}
 html[data-layout="max"] .foot{margin-top:22px}
+
+/* v0.53 — Toggled sections (Settings > Appearance > Sections) */
+h2.sec.fold{cursor:pointer;user-select:none;border-bottom:1px solid var(--line);padding-bottom:8px}
+h2.sec.fold::before{content:"";width:7px;height:7px;border-right:2px solid var(--mute);border-bottom:2px solid var(--mute);transform:rotate(-45deg);transition:transform .18s ease;margin-right:4px;flex:none}
+h2.sec.fold[aria-expanded="true"]::before{transform:rotate(45deg)}
+h2.sec.fold:hover{color:var(--accent)}
+h2.sec.fold:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+html[data-layout="min"] h2.sec.fold{margin:30px 0 14px}
+.secbody[hidden]{display:none}
+.foldbar{display:flex;gap:8px;justify-content:flex-end;margin:18px 0 -14px}
+.foldbar button{font:inherit;font-size:13px;padding:4px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--mute);cursor:pointer}
+.foldbar button:hover{color:var(--accent);border-color:var(--accent)}
+@media (prefers-reduced-motion:reduce){h2.sec.fold::before{transition:none}}

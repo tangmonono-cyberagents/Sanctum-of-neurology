@@ -1,16 +1,16 @@
 {
- "version": "2026.11.01-1022",
+ "version": "2026.11.01-1049",
  "built": "2026-11-01",
  "files": {
-  "signs.json": "643babca9716",
-  "diseases.json": "ae0c7677b2d0",
+  "signs.json": "9fbb88629813",
+  "diseases.json": "a6828f8a17ea",
   "similar.json": "b855692f1bbc",
   "meta.json": "3f96b6089f3d",
   "index.json": "6389550bb69f"
  },
  "sizes": {
-  "signs.json": 724102,
-  "diseases.json": 19961375,
+  "signs.json": 724074,
+  "diseases.json": 19961376,
   "similar.json": 836622,
   "meta.json": 198384,
   "index.json": 233666

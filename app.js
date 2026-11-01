@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.52';
+const APP_VERSION = '0.54';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -1209,15 +1209,12 @@ function viewAbout() {
   const v = D.version, b = D.meta.books;
   const last = sync.last();
   return `<h2 class="sec">Settings</h2><div class="settings">
-  <section class="card"><h3>Lexicon updates</h3><div class="form"><label for="src">Data source (folder with version.json)<input id="src" type="url" placeholder="https://example.org/sanctum/data/" value="${esc(state.source)}"></label>
-    <div class="actions"><button class="btn primary" data-update>Check for updates</button><button class="btn ghost" data-savesrc>Save source</button></div>
-    <p class="small muted" id="updmsg" style="margin:0">Works offline with the copy on this device; downloads a newer lexicon when one is published.</p></div></section>
-  <section class="card"><h3>Install for offline use</h3><p class="small muted">Put Sanctum on your desktop, Dock, Start menu or home screen.</p><a class="btn" href="#/install">How to install</a></section>
   <section class="card"><h3>Appearance</h3>
     <p class="small muted" style="margin:0 0 10px">Themes change colour and heading type only; nothing extra is downloaded. Your choice is remembered on this device.</p>
     <div class="skins">${SKINS.map(x => `<button class="skin" data-skin-set="${x[0]}" aria-pressed="${LS.get('skin', 'oxford') === x[0]}"><span class="sw">${x[3].map(c => `<i style="background:${c}"></i>`).join('')}</span><b>${x[1]}</b><span class="n">${x[2]}</span></button>`).join('')}</div>
     <div class="actions"><div class="seg" role="group" aria-label="Mode">${['system', 'light', 'dark'].map(t => `<button data-theme-set="${t}" class="${(LS.get('theme', 'system')) === t ? 'on' : ''}">${t === 'system' ? 'Auto' : t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('')}</div>
       <div class="seg" role="group" aria-label="Layout">${[['min', 'Minimalist'], ['max', 'Maximized']].map(x => `<button data-layout-set="${x[0]}" class="${LS.get('layout', 'min') === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div>
+      <div class="seg" role="group" aria-label="Disease page sections">${[['open', 'Expanded'], ['fold', 'Toggled']].map(x => `<button data-sec-set="${x[0]}" class="${LS.get('sections', 'open') === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div>
       <div class="seg" role="group" aria-label="Text size">${[['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(x => `<button data-size-set="${x[0]}" class="${LS.get('size', 'm') === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div>${langSeg()}</div></section>
   <section class="card"><h3>About</h3><p class="small" style="margin:0 0 8px"><b>For education only — not a diagnostic tool.</b> Entries are drafts until a neurologist marks them reviewed; illustrative cases are invented for teaching.</p>
     <p class="small muted" style="margin:0">App ${APP_VERSION} · data ${esc(v.version)} · ${v.counts.signs} signs · ${v.counts.diseases} diseases · ${v.counts.curatedDiseases} curated diseases · ${v.counts.curatedSigns} curated signs</p>
@@ -1282,6 +1279,7 @@ function render() {
   const key = location.hash;
   if (scrollMemo.has(key) && (view === 'q' || view === 'browse' || view === 'saved' || view === 'home')) window.scrollTo(0, scrollMemo.get(key));
   else if (view !== 'q') window.scrollTo(0, 0);
+  foldSections(view);
   if (after) after();
   clozeApply(view);
 }
@@ -1364,6 +1362,8 @@ function wire() {
   gushEvents();
   navSync();
   document.addEventListener('change', ev => { if (ev.target.id === 'qzsys') { QZ.sys = ev.target.value; LS.set('qzSys', QZ.sys); QZ.cur = null; render(); } });
+  document.addEventListener('click', ev => { const h = ev.target.closest && ev.target.closest('h2.sec.fold'); if (h && !ev.target.closest('a')) foldToggle(h); });
+  document.addEventListener('keydown', ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('h2.sec.fold')) { ev.preventDefault(); foldToggle(ev.target); } });
   document.addEventListener('click', async ev => {
     const t = ev.target.closest('button'); if (!t) return;
     const d = t.dataset;
@@ -1382,7 +1382,7 @@ function wire() {
     else if (d.cmprm) { state.cmp = state.cmp.filter(x => x !== d.cmprm); saveState(); render(); }
     else if ('cmpclear' in d) { state.cmp = []; saveState(); render(); }
     else if ('cmpadd' in d) { if (!state.cmp.includes(d.cmpadd) && state.cmp.length < 4) state.cmp.push(d.cmpadd); saveState(); render(); const i = $('#cmpq'); if (i && !i.disabled) i.focus(); }
-    else if (d.jump) { const el = document.getElementById(d.jump); if (el) window.scrollTo({top: el.getBoundingClientRect().top + window.scrollY - ($('.top').offsetHeight + 12), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }
+    else if (d.jump) { const el = document.getElementById(d.jump); if (el && el.classList.contains('fold')) foldToggle(el, true); if (el) window.scrollTo({top: el.getBoundingClientRect().top + window.scrollY - ($('.top').offsetHeight + 12), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }
     else if (d.go) { go(d.go); }
     else if (d.qzmode) { QZ.mode = d.qzmode; LS.set('qzMode', QZ.mode); QZ.cur = null; QZ.n = QZ.ok = 0; render(); }
     else if ('qzshow' in d) { QZ.done = true; render(); }
@@ -1399,6 +1399,8 @@ function wire() {
     else if ('savesrc' in d) { state.source = $('#src').value.trim(); saveState(); toast('Source saved'); }
     else if (d.themeSet) { LS.set('theme', d.themeSet); applyTheme(); render(); }
     else if (d.skinSet) { LS.set('skin', d.skinSet); applyTheme(); render(); }
+    else if (d.foldall != null) { document.querySelectorAll('h2.sec.fold').forEach(h => foldToggle(h, d.foldall === '1')); }
+    else if (d.secSet) { LS.set('sections', d.secSet); render(); }
     else if (d.layoutSet) { LS.set('layout', d.layoutSet); applyTheme(); render(); }
     else if (d.sizeSet) { LS.set('size', d.sizeSet); applyTheme(); render(); }
     else if ('syncnow' in d) { t.disabled = true; await sync.run(true); if (route().view === 'new') render(); }
@@ -1638,7 +1640,7 @@ async function boot() {
   // while the app stays open: re-check every 6 hours when online
   setInterval(() => { if (navigator.onLine) checkUpdate(false); }, 30 * 60e3);   // lexicon: every 30 min while open
   document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) checkUpdate(false); });
-  window.__sanctum = {search, norm, D: () => D, extractEntities, knownInLexicon, sync, refreshAlarm, gush: {G, gFam, GQ, gKind, gEligible}};
+  window.__sanctum = {checkUpdate, search, norm, D: () => D, extractEntities, knownInLexicon, sync, refreshAlarm, gush: {G, gFam, GQ, gKind, gEligible}};
 }
 // ------------------------------------------------------------ Cloze it
 // Active-recall mode: key words on disease and sign pages become blanks; tap one blank to reveal only that word.
@@ -1658,6 +1660,28 @@ function clozeTerms(e) {
   const out = [];
   for (const k of ['d', 'f', 'i', 't']) for (const t of ((e.cz || {})[k] || [])) if (t && t.length >= 2) out.push([t, k]);
   return out.sort((a, b) => b[0].length - a[0].length);
+}
+function foldSections(view) {
+  if (!(view === 'dx' || view === 'sign') || LS.get('sections', 'open') !== 'fold') return;
+  const root = document.querySelector('.entry > div:first-child'); if (!root) return;
+  const heads = [...root.querySelectorAll(':scope > h2.sec')]; if (heads.length < 3) return;
+  heads.forEach((h, i) => {
+    const body = document.createElement('div'); body.className = 'secbody';
+    let n = h.nextElementSibling;
+    while (n && !n.matches('h2.sec') && !n.matches('.foot')) { const nx = n.nextElementSibling; body.appendChild(n); n = nx; }
+    h.after(body);
+    const open = i < 2;
+    h.classList.add('fold'); h.tabIndex = 0; h.setAttribute('role', 'button'); h.setAttribute('aria-expanded', open ? 'true' : 'false');
+    body.hidden = !open;
+  });
+  const bar = document.createElement('div'); bar.className = 'foldbar';
+  bar.innerHTML = '<button type="button" data-foldall="1">Expand all</button><button type="button" data-foldall="0">Collapse all</button>';
+  heads[0].before(bar);
+}
+function foldToggle(h, force) {
+  const body = h.nextElementSibling; if (!body || !body.classList.contains('secbody')) return;
+  const open = force == null ? body.hidden : force;
+  body.hidden = !open; h.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 function clozeApply(view) {
   const bar = $('#czbar'); if (bar) bar.remove();
