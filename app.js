@@ -1,7 +1,7 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.47';
+const APP_VERSION = '0.52';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
 const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
@@ -370,7 +370,7 @@ function footer(e) {
 
 
 // ------------------------------------------------------------ recently added (from meta.rounds)
-const WEEK = 7 * 864e5;
+const WEEK = 3 * 864e5;   // 'recently added' window: 3 days
 function recentRounds(all) {
   const rounds = (D.meta.rounds || []).filter(r => r.n);
   if (all) return {rounds, fallback: false};
@@ -384,7 +384,7 @@ function recentHomeHTML() {
   const {rounds, fallback} = recentRounds(false);
   if (!rounds.length) return '';
   const total = rounds.reduce((a, r) => a + r.n, 0);
-  return `<h2 class="sec">${fallback ? 'Latest additions' : 'Added in the last 7 days'} <span class="count">${total}</span><a class="seclink" href="#/added">See all with summaries</a></h2>
+  return `<h2 class="sec">${fallback ? 'Latest additions' : 'Added in the last 3 days'} <span class="count">${total}</span><a class="seclink" href="#/added">See all with summaries</a></h2>
   <div class="recent">${rounds.map(r => { const es = roundEntries(r); return `<a class="rround" href="#/added/${esc(r.id)}"><div class="rhead"><b>${esc(r.title)}</b><span class="faint small">${esc(fmtDate(r.date))} · ${r.n} diseases${r.new ? ` · ${r.new} new` : ''}</span></div>
     <span class="rscope">${esc(r.scope)}</span><span class="rnames">${es.slice(0, 8).map(e => esc(e.name.replace(/\s*\([^)]*\)$/, ''))).join(' · ')}${es.length > 8 ? ` <i>+${es.length - 8} more</i>` : ''}</span></a>`; }).join('')}</div>`;
 }
@@ -403,8 +403,8 @@ function viewAdded(arg) {
       ${reads.length ? `<h3 class="sec small">Reading references added to existing diseases <span class="count">${reads.length}</span></h3><div class="chips">${reads.map(e => `<a class="chip" href="${link(e)}">${esc(e.name)}</a>`).join('')}</div>` : ''}</section>`;
   }).join('');
   return `<article class="entry added"><div class="ehead"><div class="crumb">Lexicon changelog</div><h1>Recently added</h1>
-    <p class="muted">${all ? 'Every round of curated content, newest first.' : fallback ? 'Nothing was added in the last 7 days — showing the most recent round.' : 'Diseases added or expanded in the last 7 days, with a one-line scope for each.'}
-    <a href="#/added${all ? '' : '/all'}">${all ? 'Show last 7 days' : 'Show all rounds'}</a></p></div>
+    <p class="muted">${all ? 'Every round of curated content, newest first.' : fallback ? 'Nothing was added in the last 3 days — showing the most recent round.' : 'Diseases added or expanded in the last 3 days, with a one-line scope for each.'}
+    <a href="#/added${all ? '' : '/all'}">${all ? 'Show last 3 days' : 'Show all rounds'}</a></p></div>
     ${body || '<p class="empty">No additions recorded yet.</p>'}
     <div class="foot"><div>Content is draft until reviewed by a specialist. For education only — not a diagnostic tool.</div></div></article>`;
 }
@@ -1080,9 +1080,10 @@ function shadowIndex() {
 }
 const shadowPins = () => LS.get('shadowBooks', []).filter(k => shadowIndex().has(k));
 function shadowList(v) {
-  const q = (v || '').trim().toLowerCase();
+  const fold = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const toks = fold(v).split(/[\s,;.]+/).filter(Boolean);
   const rows = [...shadowIndex().entries()].map(([k, s]) => ({k, s, b: D.meta.books[k] || {}}))
-    .filter(x => !q || [x.k, x.b.short, x.b.title, x.b.publisher].some(t => (t || '').toLowerCase().includes(q)))
+    .filter(x => { if (!toks.length) return true; const hay = fold([x.k, x.b.short, x.b.title, x.b.author, x.b.edition, x.b.publisher].join(' ')); return toks.every(t => hay.includes(t)); })
     .sort((a, b) => b.s.pages.size - a.s.pages.size || (a.b.short || a.k).localeCompare(b.b.short || b.k));
   return rows.length ? `<div class="groups shbooks">${rows.map(x => `<a href="#/browse/shadow/${encodeURIComponent(x.k)}"><span>${esc(x.b.short || x.b.title || x.k)}${x.b.edition ? ` <span class="faint small">${esc(x.b.edition)}</span>` : ''}</span><span class="c" title="${x.s.direct.size} cited directly · ${x.s.pages.size} pages in all">${x.s.pages.size}</span></a>`).join('')}</div>` : '<p class="empty">No book matches.</p>';
 }
@@ -1090,7 +1091,7 @@ function viewShadow(key) {
   const idx = shadowIndex();
   if (!key) {
     return `<div class="shadowintro"><span class="shtag">Shadow</span> <span class="small muted">Pick a book that the lexicon uses as a reference. Its pages appear grouped by chapter, so you can read the book alongside the lexicon and see which diseases it covers. The book is then added to Browse as a grey <b>Shadow</b> tab.</span></div>
-      <input id="shq" class="shq" type="search" placeholder="Search a reference book… (${idx.size} books)" autocomplete="off" aria-label="Search reference books">
+      <input id="shq" class="shq" type="search" placeholder="Search a book, author, publisher or university… (${idx.size} books)" autocomplete="off" aria-label="Search reference books">
       <div id="shlist">${shadowList('')}</div>`;
   }
   const s = idx.get(key), b = D.meta.books[key] || {};
@@ -1212,7 +1213,12 @@ function viewAbout() {
     <div class="actions"><button class="btn primary" data-update>Check for updates</button><button class="btn ghost" data-savesrc>Save source</button></div>
     <p class="small muted" id="updmsg" style="margin:0">Works offline with the copy on this device; downloads a newer lexicon when one is published.</p></div></section>
   <section class="card"><h3>Install for offline use</h3><p class="small muted">Put Sanctum on your desktop, Dock, Start menu or home screen.</p><a class="btn" href="#/install">How to install</a></section>
-  <section class="card"><h3>Appearance</h3><div class="actions"><div class="seg">${['system', 'light', 'dark'].map(t => `<button data-theme-set="${t}" class="${(LS.get('theme', 'system')) === t ? 'on' : ''}">${t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('')}</div>${langSeg()}</div></section>
+  <section class="card"><h3>Appearance</h3>
+    <p class="small muted" style="margin:0 0 10px">Themes change colour and heading type only; nothing extra is downloaded. Your choice is remembered on this device.</p>
+    <div class="skins">${SKINS.map(x => `<button class="skin" data-skin-set="${x[0]}" aria-pressed="${LS.get('skin', 'oxford') === x[0]}"><span class="sw">${x[3].map(c => `<i style="background:${c}"></i>`).join('')}</span><b>${x[1]}</b><span class="n">${x[2]}</span></button>`).join('')}</div>
+    <div class="actions"><div class="seg" role="group" aria-label="Mode">${['system', 'light', 'dark'].map(t => `<button data-theme-set="${t}" class="${(LS.get('theme', 'system')) === t ? 'on' : ''}">${t === 'system' ? 'Auto' : t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('')}</div>
+      <div class="seg" role="group" aria-label="Layout">${[['min', 'Minimalist'], ['max', 'Maximized']].map(x => `<button data-layout-set="${x[0]}" class="${LS.get('layout', 'min') === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div>
+      <div class="seg" role="group" aria-label="Text size">${[['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(x => `<button data-size-set="${x[0]}" class="${LS.get('size', 'm') === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div>${langSeg()}</div></section>
   <section class="card"><h3>About</h3><p class="small" style="margin:0 0 8px"><b>For education only — not a diagnostic tool.</b> Entries are drafts until a neurologist marks them reviewed; illustrative cases are invented for teaching.</p>
     <p class="small muted" style="margin:0">App ${APP_VERSION} · data ${esc(v.version)} · ${v.counts.signs} signs · ${v.counts.diseases} diseases · ${v.counts.curatedDiseases} curated diseases · ${v.counts.curatedSigns} curated signs</p>
     <details style="margin-top:12px"><summary class="more-toggle">Study sources</summary><ul class="list small" style="margin-top:8px">${Object.values(b).map(x => `<li>${esc(x.title)}${x.edition ? ', ' + esc(x.edition) : ''}${x.publisher ? '. ' + esc(x.publisher) : ''}</li>`).join('')}</ul>
@@ -1392,6 +1398,9 @@ function wire() {
     else if ('update' in d) { state.source = $('#src').value.trim(); saveState(); checkUpdate(true); }
     else if ('savesrc' in d) { state.source = $('#src').value.trim(); saveState(); toast('Source saved'); }
     else if (d.themeSet) { LS.set('theme', d.themeSet); applyTheme(); render(); }
+    else if (d.skinSet) { LS.set('skin', d.skinSet); applyTheme(); render(); }
+    else if (d.layoutSet) { LS.set('layout', d.layoutSet); applyTheme(); render(); }
+    else if (d.sizeSet) { LS.set('size', d.sizeSet); applyTheme(); render(); }
     else if ('syncnow' in d) { t.disabled = true; await sync.run(true); if (route().view === 'new') render(); }
     else if (d.entall) {
       // bulk: every item in the source group (default "new") gets the chosen status; one tap to undo
@@ -1426,9 +1435,19 @@ function wire() {
   window.addEventListener('online', () => { checkUpdate(false); if (route().view === 'home') render(); });
   window.addEventListener('offline', () => { if (route().view === 'home') render(); });
 }
+const SKINS = [
+  ['oxford', 'Oxford', 'Oxford blue on warm white with antique gold. Quiet and scholarly.', ['#FBFAF6', '#002147', '#8A6A1C']],
+  ['ivy', 'Ivy League', 'Crimson on ivory. Formal and traditional.', ['#FBFAF7', '#8C1D2F', '#6B5B3E']],
+  ['cambridge', 'Cambridge', 'Deep green with pale blue. Warm and calm.', ['#F8FAF7', '#1F4D3A', '#3F6E8F']],
+  ['karolinska', 'Karolinska', 'Plum on white, one clean sans. Modern and airy.', ['#FAF9F8', '#4F0433', '#8A5A78']]
+];
 function applyTheme() {
-  const t = LS.get('theme', 'system');
-  if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+  const root = document.documentElement, t = LS.get('theme', 'system'), k = LS.get('skin', 'oxford'), z = LS.get('size', 'm');
+  if (t === 'system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', t);
+  root.setAttribute('data-skin', SKINS.some(x => x[0] === k) ? k : 'oxford');
+  if (z === 'm') root.removeAttribute('data-size'); else root.setAttribute('data-size', z);
+  root.setAttribute('data-layout', LS.get('layout', 'min') === 'max' ? 'max' : 'min');
+  try { const bg = getComputedStyle(root).getPropertyValue('--bg').trim(); if (bg) document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', bg)); } catch (e) {}
 }
 
 // ------------------------------------------------------------ literature watch (PubMed / AAN journals)
