@@ -5,20 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Sanctum of Neurology</title>
 <meta name="description" content="Fast offline lexicon of neurological signs and diseases: definitions, illustrative cases and differentials.">
-<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#111418" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FBFAF6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E1621" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Sanctum">
+<script>try{var r=document.documentElement,g=function(k,d){var v=localStorage.getItem('sanctum.'+k);return v==null?d:JSON.parse(v)},t=g('theme','system'),z=g('size','m');r.setAttribute('data-skin',g('skin','oxford'));r.setAttribute('data-layout',g('layout','min')==='max'?'max':'min');if(t!=='system')r.setAttribute('data-theme',t);if(z!=='m')r.setAttribute('data-size',z)}catch(e){document.documentElement.setAttribute('data-skin','oxford')}</script>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header class="top">
   <div class="wrap bar">
-    <a class="logo" href="#/" aria-label="Sanctum of Neurology — home"><span class="mark" aria-hidden="true">S</span><span class="name">Sanctum<span class="of"> of Neurology</span></span></a>
+    <div class="hist" role="group" aria-label="History"><button type="button" class="iconbtn" id="navback" title="Back (Alt+←)" aria-label="Back" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button><button type="button" class="iconbtn" id="navfwd" title="Forward (Alt+→)" aria-label="Forward" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button></div>
+    <a class="logo" href="#/" aria-label="Sanctum of Neurology — home"><span class="mark" aria-hidden="true"><svg viewBox="0 0 30 30"><path d="M8.5 23V13.6a6.5 6.5 0 0 1 13 0V23" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/><path d="M6.5 23h17" stroke="#fff" stroke-opacity=".85" stroke-width="1.7" stroke-linecap="round"/><path d="M15 15.6V20.5M15 12.4l-2.6-2.4M15 12.4V9.2M15 12.4l2.6-2.4" stroke="#fff" stroke-width="1.2" stroke-linecap="round"/><circle cx="15" cy="14.2" r="2.3" fill="#fff"/></svg></span><span class="name"><span class="nm">Sanctum</span><span class="of">of Neurology</span></span></a>
     <div class="search" role="search">
       <svg class="sicon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
       <input id="q" type="search" placeholder="Search a sign, disease or findings…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search the lexicon">
@@ -28,9 +30,11 @@
       <a href="#/" data-v="home" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span>Search</span></a>
       <a href="#/browse/sys" data-v="browse"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg><span>Browse</span></a>
       <a href="#/compare" data-v="compare"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M17 4v16M4 8h6M14 16h6"/></svg><span>Compare</span><i class="n"></i></a>
+      <a href="#/quiz" data-v="quiz"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="13" height="15" rx="2"/><path d="M8 3h11a1 1 0 0 1 1 1v13"/><path d="M8.5 10.5a2 2 0 1 1 2.6 1.9c-.6.2-.6.7-.6 1.1M10.5 16.5v.01"/></svg><span>Quiz</span></a>
       <a href="#/saved" data-v="saved"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16l-6-4-6 4z"/></svg><span>Saved</span><i class="n"></i></a>
     </nav>
-    <a id="alarm" class="alarm" href="#/new" hidden title="New diseases or signs found in recent literature"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="txt">New entities!</span><b>0</b></a>
+    <a class="gushbtn" href="#/gush" data-v="gush" title="Gush! — swipe flash cards" aria-label="Gush! flash cards"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3.5" width="12" height="15" rx="2.2"/><path d="M4 7.5v11a2.5 2.5 0 0 0 2.5 2.5H15"/><path d="M12.6 7.2l-2.4 4h3.2l-2.4 4"/></svg><span>Gush!</span></a>
+    <button type="button" class="czsw" id="czsw" role="switch" aria-checked="false" title="Cloze it — hide key words on disease and sign pages for active recall"><span class="czsw__track" aria-hidden="true"><span class="czsw__thumb"></span></span><span class="czsw__lbl">Cloze it</span></button>
     <a class="iconbtn" href="#/about" data-v="about" title="Settings, updates and sources" aria-label="Settings and about"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></a>
   </div>
 </header>

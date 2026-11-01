@@ -1,9 +1,9 @@
 /* Sanctum of Neurology — app logic (shared by PWA, single-file HTML and Electron builds). */
 'use strict';
 (() => {
-const APP_VERSION = '0.7';
+const APP_VERSION = '0.54';
 // Where online updates come from. PWA: same folder. Single-file/Electron: set in About → Data source.
-const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/data/';   // GitHub Pages copy of the lexicon
+const SITE_DATA = 'https://tangmonono-cyberagents.github.io/Sanctum-of-neurology/Sanctum-site/data/';   // GitHub Pages copy of the lexicon
 const DEFAULT_SOURCE = (location.protocol === 'http:' || location.protocol === 'https:') && !document.getElementById('inline-data') ? './data/' : SITE_DATA;
 const LOC_ORDER = ['cortex','subcortical','basal-ganglia','thalamus','cerebellum','brainstem','cranial-nerve','optic','vestibular','meninges','ventricles-csf','spinal-cord','anterior-horn','root','plexus','nerve','nmj','muscle','autonomic','multifocal','functional'];
 const KIND = {pn: '[positive / negative]', side: '(right / left / both)', both: 'side + positive / negative'};
@@ -51,7 +51,10 @@ async function loadBundled() {
   const el = document.getElementById('inline-data');
   if (el) return JSON.parse(el.textContent);
   const get = f => fetch('data/' + f).then(r => { if (!r.ok) throw new Error(f + ' ' + r.status); return r.json(); });
-  const [version, signs, dx, meta, index] = await Promise.all(['version.json', 'signs.json', 'diseases.json', 'meta.json', 'index.json'].map(get));
+  const version = await get('version.json');
+  // a hosting limit on file size can be met by listing version.dxParts (diseases split into several files)
+  const dxGet = version.dxParts ? Promise.all(version.dxParts.map(get)).then(p => [].concat(...p)) : get('diseases.json');
+  const [signs, dx, meta, index] = await Promise.all([get('signs.json'), dxGet, get('meta.json'), get('index.json')]);
   return {version, signs, dx, meta, vocab: index.vocab, similar: null};
 }
 function cmpVer(a, b) { return String(a || '').localeCompare(String(b || ''), 'en', {numeric: true}); }
@@ -67,6 +70,7 @@ function prepare(data) {
   for (const s of D.signs) { s.t = 'sign'; D.all.push(s); }
   for (const d of D.dx) { d.t = 'dx'; D.all.push(d); }
   D.dx.forEach((d, i) => { d.ix = i; });
+  D.dxAll = D.dx; D.ns = D.dx.filter(d => d.cat === 'neuroscience'); D.dx = D.dx.filter(d => d.cat !== 'neuroscience');
   for (const e of D.all) {
     byId.set(e.id, e);
     e._n = ' ' + e.nN + ' ';
@@ -74,12 +78,15 @@ function prepare(data) {
     e._aj = ' ' + e._a.join(' | ') + ' ';
   }
   D.nea = new Map(D.dx.filter(d => d.nea != null).map(d => [d.nea, d]));
+  for (const d of D.dx) for (const k of d.neaAlt || []) D.nea.set(k, d);           // merged duplicates keep their NEA links
+  for (const [a, b] of Object.entries(D.meta.redirects || {})) if (byId.get(b)) byId.set(a, byId.get(b));   // old ids (saved, history, links)
   D.vocabSet = new Set(D.vocab);
   D.syn = new Map();
   for (const g of D.meta.syn) for (const t of g) D.syn.set(t, g);
   D.bodyReady = false;
   const build = (i) => { const end = Math.min(D.all.length, i + 400); for (; i < end; i++) { const e = D.all[i];
       e._b = ' ' + norm([e.formal, e.simple, e.more, e.exam, e.pos, (e.feat || []).join(' '), (e.inv || []).join(' ')].join(' ')) + ' ';
+      e._d = ' ' + norm([e.formal, e.simple].join(' ')) + ' ';
       e._t = e.th ? norm(e.th) : ''; }
     if (i < D.all.length) setTimeout(() => build(i), 0); else { D.bodyReady = true; if (state.q) render(); } };
   build(0);
@@ -90,7 +97,7 @@ async function similarFor(d) {
     if (el) D.similar = JSON.parse(el.textContent);
     else { try { D.similar = D._similar || await fetch('data/similar.json').then(r => r.json()); } catch (e) { D.similar = []; } }
   }
-  return (D.similar[d.ix] || []).map(([j, s, terms]) => ({e: D.dx[j], score: s / 100, terms}));
+  return (D.similar[d.ix] || []).map(([j, s, terms]) => ({e: D.dxAll[j], score: s / 100, terms})).filter(x => x.e && (x.e.cat === 'neuroscience') === (d.cat === 'neuroscience'));
 }
 
 // ------------------------------------------------------------ search
@@ -127,11 +134,31 @@ function fieldScore(e, v) {
     if (a.startsWith(v)) s = Math.max(s, 60);
   }
   if (s < 50 && e._aj.includes(' ' + v)) s = Math.max(s, 46);
-  if (!s && !short && e._b && e._b.includes(' ' + v)) s = 12 + (e._b.includes(' ' + v + ' ') ? 3 : 0);
-  if (!s && e._t && /[฀-๿]/.test(v) && e._t.includes(v)) s = 14;
+  if (!s && !short && e._b && e._b.includes(' ' + v)) s = (e._d && e._d.includes(' ' + v) ? 18 : 12) + (e._b.includes(' ' + v + ' ') ? 3 : 0);
+  if (!s && e._t && /[฀-๿]/.test(v)) { const i = e._t.indexOf(v); if (i >= 0) s = i < 60 ? 17 : 14; }
   return s;
 }
+// Thai keyboard (Kedmanee) → QWERTY, for text typed with the wrong keyboard language
+const TH_KEYS = (() => {
+  const lo = 'ๅ/-ภถุึคตจขช' + 'ๆไำพะัีรนยบลฃ' + 'ฟหกดเ้่าสวง' + 'ผปแอิืทมใฝ';
+  const loK = '1234567890-=' + 'qwertyuiop[]\\' + "asdfghjkl;'" + 'zxcvbnm,./';
+  const hi = '+๑๒๓๔ู฿๕๖๗๘๙' + '๐"ฎฑธํ๊ณฯญฐ,ฅ' + 'ฤฆฏโฌ็๋ษศซ.' + '()ฉฮฺ์?ฒฬฦ';
+  const hiK = '!@#$%^&*()_+' + 'QWERTYUIOP{}|' + 'ASDFGHJKL:"' + 'ZXCVBNM<>?';
+  const m = {};
+  for (let i = 0; i < lo.length; i++) m[lo[i]] = loK[i];
+  for (let i = 0; i < hi.length; i++) if (!(hi[i] in m)) m[hi[i]] = hiK[i];
+  return m;
+})();
+function thaiToEn(v) { return [...v].map(c => TH_KEYS[c] || c).join(''); }
 function search(q, limit = 60) {
+  const r = searchCore(q, limit);
+  if (/[฀-๿]/.test(q) && !(r && (r.dx.length || r.signs.length))) {
+    const fixed = thaiToEn(q);
+    if (fixed !== q) { const r2 = searchCore(fixed, limit); if (r2 && (r2.dx.length || r2.signs.length)) { r2.fixedFrom = q; r2.fixed = fixed; return r2; } }
+  }
+  return r;
+}
+function searchCore(q, limit = 60) {
   const t0 = performance.now();
   const raw = q.trim();
   if (!raw) return null;
@@ -157,7 +184,7 @@ function search(q, limit = 60) {
     if (!isCombo || full || tv.length > 1) {
       // whole-phrase bonus
       if (terms.length > 1) { if (e.nN === nq) total += 120; else if (e._n.includes(' ' + nq)) total += 60; else if (e._aj.includes(' ' + nq)) total += 50; }
-      if (e.cur) total += 4;
+      if (e.cur) total += e.bk ? 1 : 8;   // hand-curated core topics outrank bulk-written pages
       scored.push({e, s: total / tv.length + (full ? 40 : 0), full});
     }
   }
@@ -165,8 +192,8 @@ function search(q, limit = 60) {
   let res = scored;
   const anyFull = scored.some(x => x.full);
   if (anyFull) res = scored.filter(x => x.full);
-  const signs = res.filter(x => x.e.t === 'sign'), dx = res.filter(x => x.e.t === 'dx');
-  return {q: raw, terms, signs, dx, partial: !anyFull && tv.length > 1, used: [...used].slice(0, 4), ms: performance.now() - t0, combo: isCombo};
+  const signs = res.filter(x => x.e.t === 'sign'), dx = res.filter(x => x.e.t === 'dx' && x.e.cat !== 'neuroscience'), ns = res.filter(x => x.e.cat === 'neuroscience');
+  return {q: raw, terms, signs, ns, dx, partial: !anyFull && tv.length > 1, used: [...used].slice(0, 4), ms: performance.now() - t0, combo: isCombo};
 }
 function snippet(e, terms) {
   const text = e.formal || e.simple || '';
@@ -230,10 +257,11 @@ const sysLabel = c => (D.meta.sys[c] || c);
 function itemHTML(x, terms, sel) {
   const e = x.e || x;
   const kind = e.t === 'sign' ? 'sign' : (e.cat || 'disease');
-  return `<li><a class="item${sel ? ' sel' : ''}" href="${link(e)}" data-id="${esc(e.id)}"><div class="nm">${esc(e.name)} <span class="tag">${esc(kind)}</span>${e.cur ? '<span class="st cur">curated</span>' : ''}</div>
+  return `<li><a class="item${sel ? ' sel' : ''}" href="${link(e)}" data-id="${esc(e.id)}"><div class="nm">${stDot(e)}${esc(e.name)} <span class="tag">${esc(kind)}</span>${e.cur ? '<span class="st cur">curated</span>' : ''}</div>
     <div class="sn">${terms ? snippet(e, terms) : esc((e.formal || '').slice(0, 200))}</div>${refLine(e)}</a></li>`;
 }
 function bookShort(r) { const b = D.meta.books[r.book] || {}; return b.short || b.title || r.book; }
+const statpearlsSearch = name => 'https://www.ncbi.nlm.nih.gov/books/?term=' + encodeURIComponent('statpearls[book] ' + name.replace(/\s*\([^)]*\)\s*$/, '').replace(/[’']s\b/g, ''));
 const safeUrl = u => /^https:\/\//.test(u || '') ? u : '';
 function refText(r) {   // "Book — where" with a clickable link when the reference is a web page
   const t = esc(bookShort(r)) + (r.where ? ' — ' + esc(r.where) : '');
@@ -242,13 +270,28 @@ function refText(r) {   // "Book — where" with a clickable link when the refer
 }
 const DET_DX = [['patho', 'Pathophysiology'], ['clinical', 'Clinical picture'], ['diagnosis', 'Diagnosis'], ['treatment', 'Treatment'], ['prognosis', 'Prognosis']];
 const DET_SIGN = [['mechanism', 'Mechanism'], ['technique', 'Technique'], ['interpretation', 'Interpretation']];
-function detHTML(d, parts, id) {
+const SRC_LEVEL = {strong: ['reviewed', 'Supported by your files'], partial: ['draft', 'Partly supported — more sources welcome'], none: ['auto', 'Not found in your files — please upload a source']};
+function srcHTML(m) {
+  if (!m) return '';
+  const [cls, lab] = SRC_LEVEL[m.level] || SRC_LEVEL.none;
+  const files = (m.files || []).map(f => `<li>${esc(bookShort({book: f.book}))}${f.chapter ? ' — ' + esc(f.chapter) : ''}${f.pdfpages ? ` <span class="faint">(PDF p. ${esc(f.pdfpages)})</span>` : ''}</li>`);
+  const web = (m.web || []).map(w => `<li>${refText(w)}</li>`);
+  return `<div class="srcbox"><div class="srch"><b>Sources for this summary</b> <span class="st ${cls}">${esc(lab)}</span></div>
+    ${files.length || web.length ? `<ul class="list small">${files.join('')}${web.join('')}</ul>` : ''}
+    <p class="small muted">Written by Claude in original wording and cross-checked against the sources above (nothing copied). ${m.level === 'none' ? 'None of your uploaded files cover this topic yet — the text relies on general medical knowledge.' : ''}</p></div>`;
+}
+function detHTML(d, parts, id, m) {
   if (!d) return '';
   return `<h2 class="sec" id="${id}">In depth <span class="st draft">draft</span></h2><div class="depth">
     ${d.thd ? `<div class="thd" lang="th">${esc(d.thd)}</div>` : ''}
     ${parts.filter(([k]) => d[k]).map(([k, l]) => `<h3>${l}</h3><p class="prose">${esc(d[k])}</p>`).join('')}
-    ${d.pearls && d.pearls.length ? `<h3>Pearls</h3><ul class="list pearls">${d.pearls.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>`;
+    ${d.pearls && d.pearls.length ? `<h3>Pearls</h3><ul class="list pearls">${d.pearls.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}${srcHTML(m)}</div>`;
 }
+// 🟢 / 🟡 data status (build.py: st = g | y)
+const ST_LABEL = {g: '🟢 ข้อมูลเชิงลึกแล้ว', y: '🟡 รอข้อมูลเพิ่มเติม'};
+const ST_TIP = {g: 'In-depth page backed by a source in the library', y: 'Waiting for a disease-specific monograph article'};
+const stBadge = e => e && e.t === 'dx' && e.st ? `<a class="st ds ${e.st}" href="#/browse/status/${e.st}" title="${ST_TIP[e.st]}">${ST_LABEL[e.st]}</a>` : '';
+const stDot = e => e && e.t === 'dx' && e.st ? `<span class="sdot ${e.st}" title="${ST_LABEL[e.st]}">${e.st === 'g' ? '🟢' : '🟡'}</span>` : '';
 function refLine(e) {
   const r = (e.read || [])[0];
   if (!r) return '';
@@ -327,7 +370,7 @@ function footer(e) {
 
 
 // ------------------------------------------------------------ recently added (from meta.rounds)
-const WEEK = 7 * 864e5;
+const WEEK = 3 * 864e5;   // 'recently added' window: 3 days
 function recentRounds(all) {
   const rounds = (D.meta.rounds || []).filter(r => r.n);
   if (all) return {rounds, fallback: false};
@@ -341,7 +384,7 @@ function recentHomeHTML() {
   const {rounds, fallback} = recentRounds(false);
   if (!rounds.length) return '';
   const total = rounds.reduce((a, r) => a + r.n, 0);
-  return `<h2 class="sec">${fallback ? 'Latest additions' : 'Added in the last 7 days'} <span class="count">${total}</span><a class="seclink" href="#/added">See all with summaries</a></h2>
+  return `<h2 class="sec">${fallback ? 'Latest additions' : 'Added in the last 3 days'} <span class="count">${total}</span><a class="seclink" href="#/added">See all with summaries</a></h2>
   <div class="recent">${rounds.map(r => { const es = roundEntries(r); return `<a class="rround" href="#/added/${esc(r.id)}"><div class="rhead"><b>${esc(r.title)}</b><span class="faint small">${esc(fmtDate(r.date))} · ${r.n} diseases${r.new ? ` · ${r.new} new` : ''}</span></div>
     <span class="rscope">${esc(r.scope)}</span><span class="rnames">${es.slice(0, 8).map(e => esc(e.name.replace(/\s*\([^)]*\)$/, ''))).join(' · ')}${es.length > 8 ? ` <i>+${es.length - 8} more</i>` : ''}</span></a>`; }).join('')}</div>`;
 }
@@ -360,10 +403,386 @@ function viewAdded(arg) {
       ${reads.length ? `<h3 class="sec small">Reading references added to existing diseases <span class="count">${reads.length}</span></h3><div class="chips">${reads.map(e => `<a class="chip" href="${link(e)}">${esc(e.name)}</a>`).join('')}</div>` : ''}</section>`;
   }).join('');
   return `<article class="entry added"><div class="ehead"><div class="crumb">Lexicon changelog</div><h1>Recently added</h1>
-    <p class="muted">${all ? 'Every round of curated content, newest first.' : fallback ? 'Nothing was added in the last 7 days — showing the most recent round.' : 'Diseases added or expanded in the last 7 days, with a one-line scope for each.'}
-    <a href="#/added${all ? '' : '/all'}">${all ? 'Show last 7 days' : 'Show all rounds'}</a></p></div>
+    <p class="muted">${all ? 'Every round of curated content, newest first.' : fallback ? 'Nothing was added in the last 3 days — showing the most recent round.' : 'Diseases added or expanded in the last 3 days, with a one-line scope for each.'}
+    <a href="#/added${all ? '' : '/all'}">${all ? 'Show last 3 days' : 'Show all rounds'}</a></p></div>
     ${body || '<p class="empty">No additions recorded yet.</p>'}
     <div class="foot"><div>Content is draft until reviewed by a specialist. For education only — not a diagnostic tool.</div></div></article>`;
+}
+
+// ------------------------------------------------------------ flashcards & quiz from illustrative cases
+// Leitner boxes per case kept in this browser only: box 1 = see again soon … box 5 = known
+const QZ = {mode: LS.get('qzMode', 'cards'), sys: LS.get('qzSys', ''), cur: null, opts: null, done: false, n: 0, ok: 0};
+const qzBoxes = () => LS.get('qzBox', {});
+const qzDeck = () => D.dx.filter(d => d.cur && d.case && d.case.q && (!QZ.sys || (d.sys || []).includes(QZ.sys)));
+function qzPick() {
+  const deck = qzDeck(), box = qzBoxes(), now = Date.now();
+  if (!deck.length) return null;
+  const due = deck.filter(d => !box[d.id] || box[d.id].due <= now);
+  const pool = due.length ? due : deck;
+  const w = pool.map(d => 6 - ((box[d.id] || {}).b || 0));   // lower boxes come up more often
+  let r = Math.random() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < pool.length; i++) { r -= w[i]; if (r <= 0 && pool[i].id !== (QZ.cur || {}).id) return pool[i]; }
+  return pool[0];
+}
+const bdDeck = () => D.dx.filter(d => d.qx && (!QZ.sys || (d.sys || []).includes(QZ.sys))).flatMap(d => d.qx.map(x => ({d, x})));
+function bdPick() {
+  const deck = bdDeck(), box = qzBoxes(), now = Date.now();
+  if (!deck.length) return null;
+  const due = deck.filter(o => !box['q:' + o.x.id] || box['q:' + o.x.id].due <= now), pool = due.length ? due : deck;
+  const cand = pool.filter(o => !QZ.cur || o.x.id !== (QZ.cur.x || {}).id);
+  return (cand.length ? cand : pool)[Math.floor(Math.random() * (cand.length ? cand : pool).length)];
+}
+const LET = 'ABCDEF';
+function bdHTML(o, picked, done) {
+  const x = o.x;
+  return `<div class="case bd"><p class="prose">${esc(x.stem)}</p><div class="q">${esc(x.q)}</div>
+    <div class="qzopts">${x.opts.map((t, i) => `<button class="qzopt${done ? (i === x.ans ? ' right' : (i === picked ? ' wrong' : '')) : ''}" data-bdpick="${i}"${done ? ' disabled' : ''}><b>${LET[i]}.</b> ${esc(t)}</button>`).join('')}</div>
+    ${done ? `<div class="qzans"><div class="qzdx"><span class="muted small">Answer ${LET[x.ans]} · topic</span><a href="${link(o.d)}"><b>${esc(o.d.name)}</b></a></div><p class="a">${esc(x.why)}</p>${x.src ? `<div class="readmore"><span class="reftag">Read</span> ${refText(x.src)}</div>` : ''}</div>
+      <div class="qzact"><button class="btn primary" data-qznext>Next question</button></div>` : ''}</div>`;
+}
+function qzOptions(d) {
+  const ids = new Set([d.id]), out = [d];
+  const cand = [...(d.ddx || []).map(x => byId.get(x.id)), ...D.dx.filter(x => x.cur && x.id !== d.id && (x.sys || [])[0] === (d.sys || [])[0])].filter(Boolean);
+  for (const c of cand) { if (out.length >= 4) break; if (!ids.has(c.id)) { ids.add(c.id); out.push(c); } }
+  while (out.length < 4) { const x = D.dx[Math.floor(Math.random() * D.dx.length)]; if (x.cur && !ids.has(x.id)) { ids.add(x.id); out.push(x); } }
+  return out.sort(() => Math.random() - 0.5);
+}
+function qzGrade(id, good) {
+  const box = qzBoxes(), b = good ? Math.min(5, ((box[id] || {}).b || 0) + 1) : 1;
+  const days = [0, 0, 1, 3, 7, 21][b];
+  box[id] = {b, due: Date.now() + days * 864e5 - 6e4}; LS.set('qzBox', box);
+}
+function qzStats() { const box = qzBoxes(), deck = qzDeck(); const seen = deck.filter(d => box[d.id]).length, known = deck.filter(d => (box[d.id] || {}).b >= 4).length; return {total: deck.length, seen, known}; }
+function qzCase(c) {
+  return `<dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Examination</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>`;
+}
+function viewQuiz() {
+  const board = QZ.mode === 'board';
+  if (!QZ.cur) { QZ.cur = board ? bdPick() : qzPick(); QZ.opts = !board && QZ.cur && qzOptions(QZ.cur); QZ.done = false; QZ.picked = null; }
+  const d = QZ.cur, st = board ? (() => { const box = qzBoxes(), deck = bdDeck(); return {total: deck.length, seen: deck.filter(o => box['q:' + o.x.id]).length, known: deck.filter(o => (box['q:' + o.x.id] || {}).b >= 4).length}; })() : qzStats();
+  const groups = [...new Set(D.dx.filter(x => x.cur && x.case).map(x => (x.sys || [])[0]).filter(Boolean))].sort((a, b) => sysLabel(a).localeCompare(sysLabel(b)));
+  const head = `<div class="ehead"><div class="crumb">Learn from cases</div><h1>${board ? 'Board-style questions' : QZ.mode === 'mcq' ? 'Case quiz' : 'Flashcards'}</h1>
+    <p class="muted">${board ? 'Invented board-style vignettes (single best answer), written for this app.' : 'Invented teaching cases from the curated diseases. ' + (QZ.mode === 'mcq' ? 'Pick the diagnosis.' : 'Think of the diagnosis and the answer to the question, then reveal.')}</p></div>
+    <div class="qzbar"><div class="seg"><button data-qzmode="cards" class="${QZ.mode === 'cards' ? 'on' : ''}">Flashcards</button><button data-qzmode="mcq" class="${QZ.mode === 'mcq' ? 'on' : ''}">Quiz</button><button data-qzmode="board" class="${board ? 'on' : ''}">Board MCQ</button></div>
+    <label class="qzsel">Group <select id="qzsys"><option value="">All groups (${D.dx.filter(x => x.cur && x.case).length})</option>${groups.map(g => `<option value="${esc(g)}"${QZ.sys === g ? ' selected' : ''}>${esc(sysLabel(g))}</option>`).join('')}</select></label>
+    <span class="qzstat">${QZ.mode !== 'cards' && QZ.n ? `Score <b>${QZ.ok}/${QZ.n}</b> · ` : ''}${st.seen}/${st.total} seen · ${st.known} known</span></div>`;
+  if (!d) return `<article class="entry quiz">${head}<p class="empty">${board ? 'No board-style questions in this group yet.' : 'No cases in this group yet.'}</p></article>`;
+  if (board) return `<article class="entry quiz">${head}${bdHTML(d, QZ.picked, QZ.done)}<div class="foot"><div>Progress is stored only on this device. For education only — not a diagnostic tool.</div></div></article>`;
+  const c = d.case;
+  const answer = `<div class="qzans"><div class="qzdx"><span class="muted small">Diagnosis</span><a href="${link(d)}"><b>${esc(d.name)}</b></a>${d.th ? `<div class="small" lang="th">${esc(d.th)}</div>` : ''}</div>
+    <div class="q">${esc(c.q)}</div><p class="a">${esc(c.a)}</p>${d.read && d.read.length ? `<div class="readmore"><span class="reftag">Read</span> ${d.read.map(refText).join('; ')}</div>` : ''}</div>`;
+  let body;
+  if (QZ.mode === 'mcq') {
+    body = `<div class="case">${qzCase(c)}<div class="q">What is the most likely diagnosis?</div>
+      <div class="qzopts">${QZ.opts.map(o => `<button class="qzopt${QZ.done ? (o.id === d.id ? ' right' : (o.id === QZ.picked ? ' wrong' : '')) : ''}" data-qzpick="${esc(o.id)}"${QZ.done ? ' disabled' : ''}>${esc(o.name)}</button>`).join('')}</div>
+      ${QZ.done ? answer + `<div class="qzact"><button class="btn primary" data-qznext>Next case</button></div>` : ''}</div>`;
+  } else {
+    body = `<div class="case">${qzCase(c)}<div class="q">${esc(c.q)}</div>
+      ${QZ.done ? answer + `<div class="qzact"><span class="muted small">How did you do?</span><button class="btn" data-qzgrade="0">Again</button><button class="btn primary" data-qzgrade="1">Got it</button></div>`
+        : `<div class="qzact"><button class="btn primary" data-qzshow>Show diagnosis &amp; answer</button><button class="btn" data-qznext>Skip</button></div>`}</div>`;
+  }
+  return `<article class="entry quiz">${head}${body}<div class="foot"><div>Progress is stored only on this device. For education only — not a diagnostic tool.</div></div></article>`;
+}
+// ------------------------------------------------------------ Gush! — swipe-to-review flash cards (mobile first)
+// Leitner boxes kept on this device only (LS gushBox). Unsure cards come back within the session and sooner next time.
+const GUSH_TYPES = [['dx', 'Diseases', 'name + a rotating question'], ['case', 'Case quiz', 'short vignette on the front'], ['sign', 'Signs', 'bedside signs'], ['ns', 'Neuroscience', 'tracts and circuits']];
+const G = {fam: new Set(), tq: [], lastQ: '', pace: 0, tIdx: -1, tId: 0, open: false, cards: [], cur: 0, pend: [], recent: [], seen: 0, known: 0, unsure: 0, blockStart: 0, pool: null, gate: false};
+const gCfg = () => Object.assign({types: ['dx', 'case', 'sign', 'ns'], sys: [], yellow: false, every: 25, paceOn: false, pace: 8}, LS.get('gushCfg', {}));
+const gBox = () => LS.get('gushBox', {});
+const gKey = e => 'g:' + e.id;
+function gSigSys(s) { const out = new Set(); for (const id of (s.dx || []).slice(0, 12)) { const d = byId.get(id); if (d) (d.sys || []).forEach(x => out.add(x)); } return [...out]; }
+// Umbrella terms ("Myopathy", "Cerebellar disorders", "Toxic neuropathies") are skipped: every card names a disease, sign or structure.
+const G_HEAD = new Set(('myopathy neuropathy encephalopathy myelopathy radiculopathy monoradiculopathy plexopathy polyneuropathy mononeuropathy polyradiculopathy ganglionopathy channelopathy axonopathy neuronopathy cardiomyopathy ' +
+  'dementia ataxia chorea dystonia tremor myoclonus parkinsonism dyskinesia akathisia akinesia athetosis ballism tic seizure epilepsy spasm cramp stereotypy myotonia ' +
+  'encephalitis meningitis meningoencephalitis encephalomyelitis myelitis myositis vasculitis arteritis stroke headache vertigo aphasia apraxia agnosia amnesia coma delirium catatonia insomnia hypersomnia ' +
+  'disease disorder syndrome condition state tumour tumor neoplasm infection lesion malformation aneurysm leukodystrophy leukoencephalopathy hydrocephalus metastasis metastase lymphoma degeneration failure ' +
+  'haemorrhage hemorrhage infarction atrophy dystrophy palsy paralysis weakness pain abnormality complication problem deficiency toxicity poisoning').split(' '));
+const G_ADJ = new Set(('acute chronic subacute hyperacute cerebellar cortical subcortical central peripheral autoimmune autonomic cerebrovascular cognitive behavioral behavioural balance congenital cranial focal generalized generalised ' +
+  'hereditary inherited familial acquired idiopathic symptomatic inflammatory immune-mediated metabolic toxic nutritional primary secondary spinal brainstem cerebral neuromuscular neurological neurologic movement motor sensory sensorimotor ' +
+  'other action rest postural kinetic intention arm leg limb chin head vocal jaw distal proximal axonal paediatric pediatric childhood adult neonatal infantile episodic paroxysmal progressive degenerative neurodegenerative ' +
+  'drug-induced drug induced muscle muscular nerve neuron neuronal brain cord cervical thoracic lumbar lumbosacral multiple mixed painful large-fibre small-fibre fibre psychiatric functional organic intracranial extracranial ' +
+  'ocular visual auditory gait sleep mood personality mental and or of the with in a an non to related associated type').split(' '));
+const G_KEEP = new Set(['cerebral palsy', 'motor neuron disease', 'idiopathic hypersomnia', 'central cord syndrome', 'spinal cord infarction', 'episodic ataxia', 'sleep paralysis']);
+const gStem = w => /ies$/.test(w) && w.length > 5 ? w.slice(0, -3) + 'y' : /e?s$/.test(w) && G_HEAD.has(w.replace(/e?s$/, '')) ? w.replace(/e?s$/, '') : /s$/.test(w) && !/(is|us|ss|as|os)$/.test(w) ? w.slice(0, -1) : w;
+const gWords = n => n.toLowerCase().replace(/[’']s\b/g, '').split(/[^a-z0-9+\-]+/).filter(Boolean);
+function gGeneric(e) {
+  if (e.t === 'sign' || e.cat === 'neuroscience') return false;
+  if (e._gen != null) return e._gen;
+  let n = e.name.split(/\s+[—–]\s+/)[0]; const g = () => {
+    if (G_KEEP.has(n.toLowerCase())) return false;
+    const comma = n.includes(','); if (comma && /\(/.test(n)) return false; if (comma) n = n.split(',')[0];
+    const abbr = /\([^)]*\)/.test(n), ws = gWords(n.replace(/\([^)]*\)/g, ' '));
+    if (!ws.length) return false;
+    const st = ws.map(gStem);
+    if (!ws.every((w, i) => G_HEAD.has(w) || G_ADJ.has(w) || G_HEAD.has(st[i]) || G_ADJ.has(st[i]))) return false;
+    return !abbr || st[st.length - 1] !== ws[ws.length - 1];   // a specific abbreviation keeps a singular name (AIDP); plural umbrellas go
+  };
+  return (e._gen = g());
+}
+// Family keys: entries that share a distinctive word or abbreviation (NMOSD / NMO-ON / ...) count as one group, so a deck holds one of each.
+const G_FSTOP = new Set('antibody antibodies onset status benign system systemic autosomal dominant recessive artery arterial pathway immune anterior posterior spectrum associated related induced traumatic variant variants classic early late adult'.split(' '));
+function gFam(e) {
+  if (e._fam) return e._fam;
+  const ks = new Set(), n = e.name;
+  for (const a of [...(n.match(/\(([^)]*)\)/g) || []).map(x => x.slice(1, -1)), ...(e.ab || []).filter(a => /^[A-Z0-9\-]{2,8}$/.test(a))])
+    for (const t of a.split(/[\s\/,;\-]+/)) if (/^[A-Z][A-Z0-9]{1,7}$/.test(t)) ks.add('A:' + t.slice(0, 3).toLowerCase());
+  for (const w of gWords(n.replace(/\([^)]*\)/g, ' ')))
+    if (w.length >= 5 && !G_HEAD.has(w) && !G_ADJ.has(w) && !G_HEAD.has(gStem(w)) && !G_ADJ.has(gStem(w)) && !G_FSTOP.has(w) && !G_FSTOP.has(gStem(w))) ks.add('W:' + w.slice(0, 7));
+  return (e._fam = [...ks]);
+}
+const gClash = e => gFam(e).some(k => G.fam.has(k));
+function gEligible(e) {
+  if (e.t === 'sign') return !!(e.cur || (e.simple && (e.dx || []).length));
+  if (e.cat === 'neuroscience') return !!((e.feat || []).length >= 2 || (e.ns || {}).function);
+  return (e.feat || []).length >= 2 && !gGeneric(e);
+}
+function gPool(cfg) {
+  const T = new Set(cfg.types), S = new Set(cfg.sys);
+  const okSys = list => !S.size || (list || []).some(x => S.has(x));
+  const out = [];
+  if (T.has('dx') || T.has('case')) for (const d of D.dx) {
+    if (!gEligible(d) || !okSys(d.sys) || (!cfg.yellow && d.st !== 'g')) continue;
+    const modes = []; if (T.has('dx')) modes.push('dx'); if (T.has('case') && d.case && d.case.story) modes.push('case');
+    if (modes.length) out.push({e: d, modes});
+  }
+  if (T.has('sign')) for (const s of D.signs) { if (gEligible(s) && (cfg.yellow || s.cur) && okSys(gSigSys(s))) out.push({e: s, modes: ['sign']}); }
+  if (T.has('ns')) for (const n of D.ns) { if (gEligible(n) && (!S.size || !(n.sys || []).length || okSys(n.sys))) out.push({e: n, modes: ['ns']}); }
+  return out;
+}
+function gGroups() {
+  const m = new Map();
+  for (const d of D.dx) if (gEligible(d)) for (const s of (d.sys || []).slice(0, 2)) m.set(s, (m.get(s) || 0) + (d.st === 'g' ? 1 : 0));
+  return [...m.entries()].filter(([, n]) => n).sort((a, b) => sysLabel(a[0]).localeCompare(sysLabel(b[0])));
+}
+function gPick() {
+  const pos = G.cards.length;
+  const pi = G.pend.findIndex(p => p.at <= pos);
+  if (pi >= 0) { const p = G.pend.splice(pi, 1)[0]; if (p.mode !== 'case') G.lastQ = p.q; return {it: p.it, mode: p.mode, q: p.q, again: true}; }
+  const pool = G.pool; if (!pool.length) return null;
+  const box = gBox(), now = Date.now(), recent = new Set(G.recent);
+  const fresh = pool.filter(o => !gClash(o.e));   // one card per disease family in each deck
+  let cand = fresh.filter(o => !recent.has(o.e.id) && (!box[gKey(o.e)] || box[gKey(o.e)].due <= now));
+  if (!cand.length) cand = fresh.filter(o => !recent.has(o.e.id));
+  if (!cand.length) cand = fresh.length ? fresh : pool.filter(o => !recent.has(o.e.id));
+  if (!cand.length) cand = pool;
+  const w = cand.map(o => { const b = box[gKey(o.e)]; return b ? 6 - b.b : 3; });   // new = 3, unsure (box 1) = 5, known (box 5) = 1
+  let r = Math.random() * w.reduce((a, b) => a + b, 0), it = cand[cand.length - 1];
+  for (let i = 0; i < cand.length; i++) { r -= w[i]; if (r <= 0) { it = cand[i]; break; } }
+  const mode = it.modes[Math.floor(Math.random() * it.modes.length)];
+  gFam(it.e).forEach(k => G.fam.add(k));
+  return {it, mode, q: mode === 'case' ? 'case' : gNextQ(it.e)};
+}
+// Rotating questions: the back answers exactly what the front asks, drawn from that section of the page.
+const GQ_ORDER = ['feat', 'patho', 'inv', 'clin', 'tx'];
+const GQ = {
+  dx:   {feat: ['Key features', 'What are the key features?'], patho: ['Pathophysiology', 'What is the pathophysiology?'], inv: ['Key investigations', 'What are the key investigations?'], clin: ['Clinical picture', 'What is the typical clinical picture?'], tx: ['Treatment', 'How is it treated?']},
+  sign: {feat: ['Key features', 'What are the key features of this sign?'], patho: ['Pathophysiology', 'What is the mechanism behind this sign?'], inv: ['How to elicit', 'How do you elicit it?'], clin: ['Clinical meaning', 'What does a positive sign mean, and where is the lesion?']},
+  ns:   {feat: ['Key features', 'What are the key features?'], patho: ['Anatomy & physiology', 'Describe its anatomy and function.'], inv: ['Bedside testing', 'How do you test it at the bedside?'], clin: ['Lesion picture', 'What happens when it is damaged?'], tx: ['Clinical correlation', 'Which syndromes or treatments relate to it?']},
+};
+const gKind = e => e.t === 'sign' ? 'sign' : e.cat === 'neuroscience' ? 'ns' : 'dx';
+const gSent = t => String(t || '').split(/(?<=[.!?])\s+(?=[A-Z0-9(“"])/).map(x => x.trim()).filter(Boolean).slice(0, 5);
+function gAnswer(e, q) {
+  const det = e.det || {}, k = gKind(e);
+  if (q === 'case' || q === 'feat') {
+    if (k === 'sign') { const p = (det.pearls || []).slice(0, 4); return p.length ? p : gSent(e.formal).slice(0, 3); }
+    return (e.gush || e.feat || []).slice(0, 5);
+  }
+  if (q === 'patho') return gSent(k === 'sign' ? det.mechanism : det.patho);
+  if (q === 'inv') return k === 'sign' ? gSent(det.technique || e.exam) : (e.inv || []).slice(0, 5);
+  if (q === 'clin') {
+    if (k !== 'sign') return gSent(det.clinical);
+    const seen = (e.dx || []).map(id => byId.get(id)).filter(Boolean).slice(0, 5).map(d => d.name);
+    return [...gSent(det.interpretation || e.pos).slice(0, 3), ...(seen.length ? ['Seen in: ' + seen.join('; ')] : [])];
+  }
+  if (q === 'tx') return k === 'sign' ? [] : gSent(det.treatment);
+  return [];
+}
+function gNextQ(e) {
+  const k = gKind(e), ok = GQ_ORDER.filter(q => GQ[k][q] && gAnswer(e, q).length);
+  if (!ok.length) return 'feat';
+  for (let tries = 0; tries < 2; tries++) {
+    if (!G.tq.length) { const s = [...GQ_ORDER].sort(() => Math.random() - 0.5); if (s[0] === G.lastQ) s.push(s.shift()); G.tq = s; }
+    const i = G.tq.findIndex(q => ok.includes(q) && q !== G.lastQ);
+    if (i >= 0) { const q = G.tq.splice(i, 1)[0]; G.lastQ = q; return q; }
+    G.tq = [];
+  }
+  const q = ok.find(x => x !== G.lastQ) || ok[0]; G.lastQ = q; return q;
+}
+function gBullets(e) {
+  const f = (e.gush || e.feat || []).slice(0, 5);   // optional hand-written card bullets win
+  if (f.length) return f;
+  if (e.t === 'sign') { const p = ((e.det || {}).pearls || []).slice(0, 4); return p.length ? p : [firstSentence(e.simple || e.formal)]; }
+  return [firstSentence(e.simple || e.formal)];
+}
+function gMeta(e) {
+  if (e.t === 'sign') return [(e.loc || []).slice(0, 3).map(locLabel).join(', ')].filter(Boolean).join(' · ');
+  if (e.cat === 'neuroscience') return NS_KIND[(e.ns || {}).kind] || 'Neuroscience';
+  return [(e.tempo || []).map(c => (D.meta.tempo && D.meta.tempo[c]) || c).join(' / '), (e.loc || []).slice(0, 3).map(locLabel).join(', ')].filter(Boolean).join(' · ');
+}
+function gTag(e, mode) { return mode === 'case' ? 'Case quiz' : e.t === 'sign' ? 'Sign' : e.cat === 'neuroscience' ? 'Neuroscience' : sysLabel((e.sys || ['disease'])[0]); }
+function gCardHTML(c, i) {   // front: name + question only (English); back: the answer to that question
+  const e = c.it.e, mode = c.mode, q = c.q || 'feat', L = mode === 'case' ? ['Diagnosis', 'What is the diagnosis?'] : (GQ[gKind(e)][q] || GQ.dx.feat);
+  let front;
+  if (mode === 'case') {
+    const k = e.case;
+    front = `<div class="gcase"><p><b>${esc(k.who || '')}</b></p><p>${esc(k.story || '')}</p>${k.exam ? `<p>${esc(k.exam)}</p>` : ''}</div><div class="gq">${e.cat === 'biomarker' ? 'Which antibody fits this picture?' : e.cat === 'pathogen' ? 'Which organism is it?' : L[1]}</div>`;
+  } else front = `<h2 class="gname">${esc(e.name)}</h2><div class="gq">${esc(L[1])}</div>`;
+  const ans = gAnswer(e, q);
+  const back = `<div class="gslow"${c.slow ? '' : ' hidden'}>Too slow!</div><h2 class="gname sm">${esc(e.name)}</h2><div class="gqlabel">${esc(L[0])}</div>
+    <ul class="gfeat">${ans.map(b => `<li>${esc(b)}</li>`).join('')}</ul>
+    <a class="gmore" href="${link(e)}" data-gopen><span>Read the full page<small>${e.t === 'sign' ? 'technique, localisation, diseases' : e.cat === 'neuroscience' ? 'pathway, lesions, clinical correlation' : 'case, differentials, investigations, references'}</small></span><b aria-hidden="true">→</b></a>
+    <div class="ggrade"><button class="btn" data-ggrade="0" data-gi="${i}" title="Not sure (1)">Not sure</button><button class="btn primary" data-ggrade="1" data-gi="${i}" title="Gotcha! (2)">Gotcha!</button></div>`;
+  return `<section class="gslide" data-gi="${i}"><div class="gcard${c.flip ? ' flip' : ''}${c.graded != null ? ' graded' : ''}" data-gflip="${i}" data-gq="${mode === 'case' ? 'case' : q}" role="button" tabindex="0" aria-label="Flash card ${i + 1}, tap to flip">
+    <div class="gface gfront">${G.pace && !c.flip ? '<div class="ghurry" hidden>“Hurry up!”</div>' : ''}${front}<div class="ghint">${c.again ? '↻ coming back · ' : ''}Tap to flip</div>${G.pace && !c.flip ? `<div class="gtimer" aria-hidden="true"><i></i><b></b></div>` : ''}</div>
+    <div class="gface gback">${back}</div></div></section>`;
+}
+function gSummaryHTML() {
+  const n = G.cards.length - G.blockStart;
+  const k = G.cards.slice(G.blockStart).filter(c => c.graded === 1).length, u = G.cards.slice(G.blockStart).filter(c => c.graded === 0).length;
+  return `<section class="gslide gsum" id="gsum"><div class="gsumcard"><div class="gtag">Break point</div><h2>${n} cards reviewed</h2>
+    <p class="gbig"><span><b>${k}</b> Gotcha!</span><span><b>${u}</b> not sure</span><span><b>${n - k - u}</b> skipped</span></p>
+    <p class="muted">Deck complete. Carry on with a new deck or rest your eyes. Cards you were not sure about will come back.</p>
+    <div class="ggrade"><button class="btn" data-gstop>Take a break</button><button class="btn primary" data-gmore>${gCfg().every} more</button></div>
+    <p class="small muted">Today: ${G.seen} seen · ${G.known} Gotcha! · ${G.unsure} not sure</p></div></section>`;
+}
+function gEnsure() {   // keep three cards ready ahead of the current one; stop at the break point
+  const feed = $('#gfeed'); if (!feed) return;
+  const every = gCfg().every;
+  while (!G.gate && G.cards.length < G.cur + 4) {
+    if (G.cards.length - G.blockStart >= every) { G.gate = true; feed.insertAdjacentHTML('beforeend', gSummaryHTML()); break; }
+    const c = gPick(); if (!c) break;
+    G.cards.push(c); G.recent = [c.it.e.id, ...G.recent].slice(0, Math.min(20, Math.floor(G.pool.length / 2)));
+    feed.insertAdjacentHTML('beforeend', gCardHTML(c, G.cards.length - 1));
+  }
+  const s = $('#gsum'); if (s && G.gate) s.outerHTML = gSummaryHTML();
+  const p = $('#gprog'); if (p) p.textContent = `${Math.min(G.cur - G.blockStart + 1, every)} / ${every}`;
+}
+function gGrade(i, good) {
+  const c = G.cards[i]; if (!c) return;
+  const id = gKey(c.it.e), box = gBox();
+  if (c.graded == null) { if (good) G.known++; else G.unsure++; }
+  else { if (c.graded === 1) G.known--; else G.unsure--; if (good) G.known++; else G.unsure++; }
+  c.graded = good ? 1 : 0;
+  const b = good ? Math.min(5, ((box[id] || {}).b || 0) + 1) : 1;
+  box[id] = {b, due: Date.now() + [0, 0, 1, 3, 7, 21][b] * 864e5 - 6e4}; LS.set('gushBox', box);
+  if (!good && !G.pend.some(p => p.it === c.it)) G.pend.push({it: c.it, mode: c.mode, q: c.q, at: G.cards.length + 4 + Math.floor(Math.random() * 3)});
+  const el = document.querySelector(`.gcard[data-gflip="${i}"]`); if (el) el.classList.add('graded');
+  setTimeout(() => gGo(i + 1), 220);
+}
+function gGo(i) { const el = document.querySelector(`.gslide[data-gi="${i}"]`) || (i >= G.cards.length && $('#gsum')); if (el) el.scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }
+function gFlip(i) { const c = G.cards[i]; if (!c) return; if (G.tIdx === i) { gTimerStop(); c.timed = true; const t = document.querySelector(`.gcard[data-gflip="${i}"] .gtimer`); if (t) t.remove(); } c.flip = !c.flip; const el = document.querySelector(`.gcard[data-gflip="${i}"]`); if (el) el.classList.toggle('flip', c.flip); }
+// Pick up the pace: countdown on the front; at zero the card flips and shows "Too slow!"
+function gTimerStop() { clearInterval(G.tId); if (G.tIdx >= 0) { const c = G.cards[G.tIdx]; if (c && !c.flip && !c.slow) c.timed = false; } G.tId = 0; G.tIdx = -1; }   // a countdown cut short (card hidden) may run again
+function gTimerStart(i) {
+  if (!G.pace || G.tIdx === i) return;
+  gTimerStop();
+  const c = G.cards[i], card = document.querySelector(`.gcard[data-gflip="${i}"]`);
+  if (!c || c.flip || c.graded != null || c.timed || !card) return;
+  const box = card.querySelector('.gtimer'); if (!box) return;
+  const bar = box.querySelector('i'), num = box.querySelector('b'), end = Date.now() + G.pace * 1000;
+  c.timed = true; G.tIdx = i;
+  bar.style.transition = 'none'; bar.style.transform = 'scaleX(1)';
+  requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.transition = `transform ${G.pace}s linear`; bar.style.transform = 'scaleX(0)'; }));
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    num.textContent = left; box.classList.toggle('hurry', left <= 3);
+    const h = card.querySelector('.ghurry'); if (h) h.hidden = !(left <= 5 && left > 0 && G.pace > 5);
+    if (Date.now() >= end) {
+      gTimerStop(); c.slow = true;
+      const s = card.querySelector('.gslow'); if (s) s.hidden = false;
+      box.remove(); const h = card.querySelector('.ghurry'); if (h) h.remove(); c.flip = true; card.classList.add('flip');
+      if (navigator.vibrate) try { navigator.vibrate(60); } catch (e) {}
+    }
+  };
+  tick(); G.tId = setInterval(tick, 100);
+}
+function gushOpen() {
+  const cfg = gCfg(); G.pool = gPool(cfg);
+  if (!G.pool.length) { toast('No cards for this selection'); return false; }
+  gTimerStop(); G.pace = cfg.paceOn ? cfg.pace : 0;
+  Object.assign(G, {fam: new Set(), tq: [], lastQ: '', open: true, cards: [], cur: 0, pend: [], recent: [], seen: 0, known: 0, unsure: 0, blockStart: 0, gate: false});
+  let ov = $('#gush'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'gush'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-label', 'Gush flash cards');
+  ov.innerHTML = `<div class="gtop"><span class="gbrand">Gush!</span><span class="gprog" id="gprog"></span>${G.pace ? `<span class="gpacetag">⏱ ${G.pace} s</span>` : ''}<span class="sp"></span><a class="gset" href="#/gush" data-gclose aria-label="Change decks">Decks</a><button class="iconbtn gx" data-gclose aria-label="Close">×</button></div><div class="gfeed" id="gfeed"></div>`;
+  document.body.appendChild(ov); document.documentElement.classList.add('gushing');
+  const feed = $('#gfeed');
+  const io = new IntersectionObserver(es => { for (const x of es) if (x.isIntersecting && x.target.dataset.gi != null) { const i = +x.target.dataset.gi; if (i + 1 > G.seen) G.seen = i + 1; G.cur = i; gEnsure(); gTimerStart(i); } }, {root: feed, threshold: 0.6});
+  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1 && n.classList.contains('gslide')) io.observe(n); }))).observe(feed, {childList: true});
+  gEnsure();
+  ov.addEventListener('click', ev => {
+    const t = ev.target;
+    if (t.closest('[data-gclose]')) { ev.preventDefault(); gushClose(t.closest('a') ? '#/gush' : null); return; }
+    if (t.closest('[data-gopen]')) { gTimerStop(); ov.hidden = true; document.documentElement.classList.remove('gushing'); return; }   // keep the feed to come back to
+    const g = t.closest('[data-ggrade]'); if (g) { ev.stopPropagation(); gGrade(+g.dataset.gi, g.dataset.ggrade === '1'); return; }
+    if (t.closest('[data-gstop]')) { gushClose('#/'); return; }
+    if (t.closest('[data-gmore]')) { const s = $('#gsum'); G.fam = new Set(); G.blockStart = G.cards.length; G.gate = false; if (s) { s.removeAttribute('id'); s.classList.add('done'); } gEnsure(); gGo(G.blockStart); return; }
+    const f = t.closest('[data-gflip]'); if (f && !t.closest('a,button')) gFlip(+f.dataset.gflip);
+  });
+  ov.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { gushClose(null); return; }
+    if (ev.key === ' ' || ev.key === 'Enter') { if (!ev.target.closest('button,a')) { ev.preventDefault(); gFlip(G.cur); } }
+    else if (ev.key === 'ArrowDown' || ev.key === 'j') { ev.preventDefault(); gGo(G.cur + 1); }
+    else if (ev.key === 'ArrowUp' || ev.key === 'k') { ev.preventDefault(); gGo(G.cur - 1); }
+    else if (ev.key === '1') gGrade(G.cur, false); else if (ev.key === '2') gGrade(G.cur, true);
+  });
+  setTimeout(() => { const c = $('.gcard', ov); if (c) c.focus({preventScroll: true}); }, 50);
+  return true;
+}
+function gushClose(to, keep) {
+  gTimerStop();
+  const ov = $('#gush'); if (ov) ov.remove(); document.documentElement.classList.remove('gushing'); G.open = false;
+  if (keep) return;   // the link inside the card navigates on its own
+  if (route().view === 'gush' && route().arg === 'play') { if (to || !(window.__navI > 0)) location.replace(to || '#/gush'); else history.back(); }
+  else if (to) go(to);
+}
+function viewGush(arg) {
+  const cfg = gCfg(), groups = gGroups(), S = new Set(cfg.sys), n = gPool(cfg).length, box = gBox();
+  const known = Object.values(box).filter(b => b.b >= 4).length, unsure = Object.values(box).filter(b => b.b === 1).length;
+  return `<article class="entry gushset"><div class="ehead"><div class="crumb">Swipe to review</div><h1>Gush!</h1>
+    <p class="muted">Short flash cards you can swipe through like a feed: tap to flip, swipe up for the next one. Questions rotate between key features, pathophysiology, key investigations, clinical picture and treatment, and each deck holds only one disease from a family. Cards you are not sure about come back sooner. A break point appears every ${cfg.every} cards.</p></div>
+    <section class="card"><h3>Cards</h3><div class="gchecks">${GUSH_TYPES.map(([k, l, h]) => `<label class="gchk"><input type="checkbox" data-gtype="${k}"${cfg.types.includes(k) ? ' checked' : ''}><span><b>${l}</b><small>${h}</small></span></label>`).join('')}</div></section>
+    <section class="card"><h3>Groups <span class="faint small">${S.size ? S.size + ' selected' : 'all groups'}</span></h3>
+      <div class="actions" style="margin-bottom:10px"><button class="btn${S.size ? '' : ' on'}" data-gsysall>All groups</button>${S.size ? '<button class="btn ghost" data-gsysnone>Clear</button>' : ''}</div>
+      <div class="gchecks sys">${groups.map(([g, c]) => `<label class="gchk"><input type="checkbox" data-gsys="${esc(g)}"${S.has(g) ? ' checked' : ''}><span><b>${esc(sysLabel(g))}</b><small>${c}</small></span></label>`).join('')}</div></section>
+    <section class="card"><h3>Options</h3><label class="gchk wide"><input type="checkbox" data-gyellow${cfg.yellow ? ' checked' : ''}><span><b>Include 🟡 pages</b><small>pages still waiting for a disease-specific source (bullets may be thinner)</small></span></label>
+      <div class="gpace${cfg.paceOn ? ' on' : ''}"><label class="gchk wide"><input type="checkbox" data-gpace${cfg.paceOn ? ' checked' : ''}><span><b>⏱ Pick up the pace</b><small>countdown on every card — when time runs out the card flips by itself: Too slow!</small></span></label>
+        <div class="seg" role="group" aria-label="Seconds per card">${[6, 8, 10, 15, 18].map(v => `<button data-gpacesec="${v}" class="${cfg.pace === v ? 'on' : ''}"${cfg.paceOn ? '' : ' disabled'}>${v} s</button>`).join('')}</div></div>
+      <div class="actions" style="margin-top:10px"><span class="small muted">Break every</span><div class="seg">${[20, 25, 30].map(v => `<button data-gevery="${v}" class="${cfg.every === v ? 'on' : ''}">${v}</button>`).join('')}</div></div></section>
+    <div class="gstart"><button class="btn primary big" data-gstart${n ? '' : ' disabled'}>Start Gush! · ${n.toLocaleString()} cards${cfg.paceOn ? ` · ⏱ ${cfg.pace} s` : ''}</button>
+      <span class="small muted">On this device: ${known} known · ${unsure} not sure${Object.keys(box).length ? ` · <button class="linkbtn" data-greset>reset progress</button>` : ''}</span></div>
+    <div class="foot"><div>Progress is stored only on this device. For education only — not a diagnostic tool.</div></div></article>`;
+}
+function gushEvents() {
+  document.addEventListener('change', ev => {
+    const t = ev.target; if (!t.closest || !t.closest('.gushset')) return;
+    const cfg = gCfg();
+    if (t.dataset.gtype) { const s = new Set(cfg.types); t.checked ? s.add(t.dataset.gtype) : s.delete(t.dataset.gtype); cfg.types = GUSH_TYPES.map(x => x[0]).filter(k => s.has(k)); }
+    else if (t.dataset.gsys) { const s = new Set(cfg.sys); t.checked ? s.add(t.dataset.gsys) : s.delete(t.dataset.gsys); cfg.sys = [...s]; }
+    else if ('gyellow' in t.dataset) cfg.yellow = t.checked;
+    else if ('gpace' in t.dataset) cfg.paceOn = t.checked;
+    else return;
+    LS.set('gushCfg', cfg); const y = window.scrollY; render(); window.scrollTo(0, y);
+  });
+  document.addEventListener('click', ev => {
+    const t = ev.target.closest('button'); if (!t || !t.closest('.gushset')) return;
+    const cfg = gCfg(), d = t.dataset;
+    if ('gstart' in d) { if (gushOpen()) location.hash = '#/gush/play'; return; }
+    if ('gsysall' in d || 'gsysnone' in d) cfg.sys = [];
+    else if (d.gevery) cfg.every = +d.gevery;
+    else if (d.gpacesec) { cfg.pace = +d.gpacesec; cfg.paceOn = true; }
+    else if ('greset' in d) { if (!confirmReset()) return; LS.set('gushBox', {}); }
+    else return;
+    LS.set('gushCfg', cfg); const y = window.scrollY; render(); window.scrollTo(0, y);
+  });
+}
+function confirmReset() { const b = $('[data-greset]'); if (b && b.dataset.armed) return true; if (b) { b.dataset.armed = 1; b.textContent = 'tap again to reset'; } return false; }
+function gushRoute(view, arg) {   // called from render(): show, restore or drop the overlay to match the URL
+  const ov = $('#gush');
+  if (view === 'gush' && arg === 'play') {
+    if (ov && ov.hidden) { ov.hidden = false; document.documentElement.classList.add('gushing'); G.open = true; setTimeout(() => { gGo(G.cur); gTimerStart(G.cur); }, 0); }
+    else if (!ov && !gushOpen()) location.replace('#/gush');
+  } else if (ov && !ov.hidden) { ov.remove(); document.documentElement.classList.remove('gushing'); G.open = false; }
+  else if (ov && ov.hidden && view === 'gush') { ov.remove(); G.open = false; }
 }
 // ------------------------------------------------------------ views
 function viewHome() {
@@ -379,12 +798,14 @@ function viewHome() {
   return `${reminderHTML()}<section class="hello"><h1>What would you like to look up?</h1>
     <p>Type a sign, a disease, an abbreviation or a few findings joined with “+”. Misspellings are fine.</p>
     <div class="tries">${['ptosis + fatigable', 'INO', 'CIDP', 'babinsky', 'thunderclap', 'แขนขาอ่อนแรง'].map(t => `<button data-try="${esc(t)}">${esc(t)}</button>`).join('')}</div></section>
+  ${D.ns.length ? `<section class="card stcard"><h3>Neuroscience</h3><p class="small" style="margin:0"><a href="#/browse/ns">Tracts, circuits and neuroanatomy <b>${D.ns.length}</b> pages</a> — pathway, function, bedside test and lesion for each.</p></section>` : ''}
   ${recentHomeHTML()}
+  <section class="card stcard"><h3>Data status</h3><p class="small" style="margin:0"><a href="#/browse/status/g">🟢 ข้อมูลเชิงลึกแล้ว <b>${D.dx.filter(d => d.st === 'g').length}</b></a> · <a href="#/browse/status/y">🟡 รอข้อมูลเพิ่มเติม <b>${D.dx.filter(d => d.st === 'y').length}</b></a> <span class="muted">— 🟡 pages are waiting for a disease-specific monograph article.</span></p></section>
   ${hist.length ? `<h2 class="sec">Recently opened</h2><div class="chips">${hist.map(e => `<a class="chip" href="${link(e)}">${esc(e.name)}</a>`).join('')}</div>` : ''}
   ${arts.length ? `<h2 class="sec">Clinical overviews <span class="count">${arts.length}</span></h2><div class="arts">${arts.map(a => `<a class="art" href="#/article/${esc(a.id)}"><b>${esc(a.title)}</b><span>${esc(a.body[0])}</span></a>`).join('')}</div>` : ''}
   <h2 class="sec">Curated diseases <span class="count">${cur.length}</span></h2>
   <div class="topics">${topics}<details><summary><span>Core bedside signs</span><span class="faint small">${csigns.length}</span></summary><div class="chips">${csigns.map(s => `<a class="chip" href="${link(s)}">${esc(s.name)}</a>`).join('')}</div></details></div>
-  <div class="homefoot"><span>${D.signs.length.toLocaleString()} signs · ${D.dx.length.toLocaleString()} diseases</span><span>Data ${esc(v.version)}</span><a href="#/install">Install for offline use</a><span>For education only — not a diagnostic tool</span></div>`;
+  <div class="homefoot"><span>${D.signs.length.toLocaleString()} signs · ${D.dx.length.toLocaleString()} diseases${D.ns.length ? ` · ${D.ns.length} neuroscience` : ''}</span><span>Data ${esc(v.version)}</span><a href="#/install">Install for offline use</a><span>For education only — not a diagnostic tool</span></div>`;
 }
 function viewArticle(id) {
   const a = (D.meta.articles || []).find(x => x.id === id);
@@ -404,20 +825,25 @@ function viewResults(r) {
   const cap = n => Math.min(n, 60);
   const fixes = r.used.filter(u => !u.endsWith('(synonym)'));
   const dym = fixes.length ? `<p class="dym">Including spelling matches: ${fixes.map(u => esc(u.split('→')[1])).join(', ')}</p>` : '';
-  if (!r.dx.length && r.signs.length) state.resTab = 'sign'; else if (r.dx.length && !r.signs.length) state.resTab = 'dx';
+  const nsL = r.ns || [];
+  if (state.resTabQ !== r.q) { state.resTab = 'dx'; state.resTabQ = r.q; }
+  if (state.resTab === 'ns' && !nsL.length) state.resTab = 'dx';
+  if (D.bodyReady && !r.dx.length && r.signs.length) state.resTab = 'sign'; else if (r.dx.length && !r.signs.length && state.resTab !== 'ns') state.resTab = 'dx';
+  if (!r.dx.length && !r.signs.length && nsL.length) state.resTab = 'ns';
+  const kb = r.fixed ? `<p class="dym kbfix">Thai keyboard detected. Showing results for “<b>${esc(r.fixed)}</b>”. <span class="muted">Suggestions:</span> ${r.dx.concat(r.signs).slice(0, 5).map(x => `<a class="chip" href="${link(x.e)}">${esc(x.e.name)}</a>`).join(' ')}</p>` : '';
   const part = r.partial ? `<p class="dym muted">No entry matches every finding; showing entries that match some of them.</p>` : '';
   const col = (k, title, list) => `<section class="rescol${state.resTab === k ? ' show' : ''}"><h2 class="sec">${title} <span class="count">${list.length}</span></h2>
     ${list.length ? `<ul class="res">${list.slice(0, cap(list.length)).map(x => itemHTML(x, r.terms)).join('')}</ul>${list.length > 60 ? `<p class="small muted more">Showing 60 of ${list.length}. Add another word to narrow.</p>` : ''}` : '<p class="empty">No matches</p>'}</section>`;
-  const tabs = `<div class="seg restabs"><button data-rt="dx" class="${state.resTab === 'dx' ? 'on' : ''}">Diseases ${r.dx.length}</button><button data-rt="sign" class="${state.resTab === 'sign' ? 'on' : ''}">Signs ${r.signs.length}</button></div>`;
-  if (!r.dx.length && !r.signs.length) return `<div class="empty"><p><b>No match for “${esc(r.q)}”.</b></p><p class="small">Try fewer words, an abbreviation, or separate findings with “+”.</p></div>`;
-  return `${summaryPanel(r)}${dym}${part}${tabs}<div class="rescols one">${col('dx', 'Diseases', r.dx)}${col('sign', 'Signs', r.signs)}</div>`;
+  const tabs = `<div class="seg restabs"><button data-rt="dx" class="${state.resTab === 'dx' ? 'on' : ''}">Diseases ${r.dx.length}</button><button data-rt="sign" class="${state.resTab === 'sign' ? 'on' : ''}">Signs ${r.signs.length}</button><button data-rt="ns" class="${state.resTab === 'ns' ? 'on' : ''}">Neuroscience ${nsL.length}</button></div>`;
+  if (!r.dx.length && !r.signs.length && !nsL.length) return `<div class="empty"><p><b>No match for “${esc(r.q)}”.</b></p><p class="small">Try fewer words, an abbreviation, or separate findings with “+”.</p></div>`;
+  return `${kb}${summaryPanel(r)}${dym}${part}${tabs}<div class="rescols one">${col('dx', 'Diseases', r.dx)}${col('sign', 'Signs', r.signs)}${col('ns', 'Neuroscience', nsL)}</div>`;
 }
 function entryHead(e) {
   const kind = e.t === 'sign' ? 'Sign' : (e.cat ? e.cat.charAt(0).toUpperCase() + e.cat.slice(1) : 'Disease');
   const group = e.t === 'dx' && e.sys && e.sys[0] ? ` · <a href="#/browse/sys/${e.sys[0]}">${esc(sysLabel(e.sys[0]))}</a>` : '';
   const ab = e.ab || [];
   const waiting = state.cmp.length === 1 && state.cmp[0] !== e.id ? byId.get(state.cmp[0]) : null;
-  return `<div class="ehead"><div class="crumb"><span>${kind}${group}</span>${e.cur ? '<span class="st cur">curated</span>' : ''}${statusChip(e)}</div>
+  return `<div class="ehead"><div class="crumb"><span>${kind}${group}</span>${e.cur ? '<span class="st cur">curated</span>' : ''}${statusChip(e)}${stBadge(e)}</div>
     <h1>${esc(e.name)}</h1>
     ${ab.length ? `<div class="aka">Also called ${ab.slice(0, 4).map(esc).join(' · ')}${ab.length > 4 ? ` <span class="faint">+${ab.length - 4}</span>` : ''}</div>` : ''}
     <div class="actions"><button class="btn${isFav(e.id) ? ' on' : ''}" data-fav="${esc(e.id)}">${isFav(e.id) ? ICON.starf + 'Saved' : ICON.star + 'Save'}</button>
@@ -437,7 +863,8 @@ function viewSign(e) {
     ${jumpNav(nav)}
     ${e.exam ? `<h2 class="sec" id="s-exam">How to examine</h2><p class="prose">${esc(e.exam)}</p>` : ''}
     ${e.pos ? `<h2 class="sec" id="s-pos">What a positive result means</h2><p class="prose">${esc(e.pos)}</p>` : ''}
-    ${detHTML(e.det, DET_SIGN, 's-depth')}
+    ${nsChips(e)}
+    ${detHTML(e.det, DET_SIGN, 's-depth', e.srcmap)}
     ${!e.exam && !e.pos ? `<p class="small muted" style="margin-top:14px">Examination steps and interpretation have not been written for this sign yet; the definition above includes the key finding.</p>` : ''}
     <h2 class="sec" id="s-loc">Localization ${autoChip(e, 'loc')}</h2>${axisHTML(e.loc, true)}
     <h2 class="sec" id="s-dx">Seen in <span class="count">${dx.length || ''}</span></h2>
@@ -450,15 +877,102 @@ function viewSign(e) {
 function bookRef(r) {
   const b = D.meta.books[r.book] || {title: r.book};
   const u = safeUrl(r.url);
-  return `<li><b>${esc(b.title)}</b>${b.edition ? `, ${esc(b.edition)}` : ''}${b.publisher ? `. ${esc(b.publisher)}` : ''}${r.where ? ` — ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(r.where)} ↗</a>` : esc(r.where)}` : ''}</li>`;
+  return `<li><b>${esc(b.title)}</b>${b.edition ? `, ${esc(b.edition)}` : ''}${b.publisher ? `. ${esc(b.publisher)}` : ''}${r.where ? ` — ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(r.where)} ↗</a>` : esc(r.where)}` : ''}${r.auto ? ' <span class="st auto" title="Found by scanning the books in the library">also covered</span>' : ''} <a class="shlink" href="#/browse/shadow/${encodeURIComponent(r.book)}" title="See every page that uses this book, by chapter">Shadow</a></li>`;
+}
+
+// biomarker pages that a disease page mentions (by antibody short name) or that point to it
+let BM_KEYS = null;
+function bmKeys() {
+  if (BM_KEYS) return BM_KEYS;
+  const rx = k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  BM_KEYS = D.dx.filter(d => d.cat === 'biomarker').map(b => {
+    const core = b.name.replace(/^Anti-/, '').replace(/ antibod(y|ies).*$/, '').trim();
+    const ks = [...new Set([core, ...(b.ab || []).map(a => a.replace(/^anti-?/i, '').replace(/ antibody$/i, '').trim())])].filter(k => k.length >= 2 && k.length <= 24);
+    const strong = ks.filter(k => k.length >= 3 && (/\d/.test(k) || (k.match(/[A-Z]/g) || []).length >= 2) && !/\s/.test(k));
+    const reAnti = new RegExp('anti-?\\s?(' + ks.map(rx).join('|') + ')(?![A-Za-z0-9])', 'i');
+    const reStrong = strong.length ? new RegExp('(^|[^A-Za-z0-9-])(' + strong.map(rx).join('|') + ')(?![A-Za-z0-9])') : null;
+    return {b, test: t => reAnti.test(t) || (reStrong ? reStrong.test(t) : false)};
+  });
+  return BM_KEYS;
+}
+// fungal / infectious pathogen pages, linked from disease pages that name the organism
+let PG_KEYS = null;
+function pgKeys() {
+  if (PG_KEYS) return PG_KEYS;
+  const extra = {dematiaceous: ['cladophialophora', 'exserohilum', 'dematiaceous', 'phaeohyphomycosis'], mucorales: ['mucor', 'mucormycosis', 'rhizopus'], scedosporium: ['scedospor', 'lomentospora']};
+  PG_KEYS = D.dx.filter(d => d.cat === 'pathogen').map(b => {
+    const base = b.name.replace(/\s*\(pathogen\)\s*$/i, '').trim();
+    const g = base.split(/[\s/]+/)[0].toLowerCase();
+    const sp = base.split(/\s+/)[1] || '';
+    let ks = extra[g] || [g.slice(0, Math.max(6, g.length - 2))];
+    if (/^(neoformans|gattii)$/i.test(sp)) ks = [sp.toLowerCase()];
+    const re = new RegExp('\\b(' + ks.join('|') + ')', 'i');
+    return {b, test: t => re.test(t)};
+  });
+  return PG_KEYS;
+}
+function pgFor(e) {
+  const txt = [e.name, e.formal, e.simple, ...(e.feat || []), ...(e.inv || []), e.more, e.det ? JSON.stringify(e.det) : ''].filter(Boolean).join(' \n ');
+  return pgKeys().filter(({b, test}) => b !== e && test(txt)).map(x => x.b);
+}
+function bmFor(e) {
+  if (e.cat === 'biomarker') return [];
+  const txt = [e.formal, e.simple, ...(e.feat || []), ...(e.inv || []), e.more, e.det ? JSON.stringify(e.det) : ''].filter(Boolean).join(' \n ');
+  return bmKeys().filter(({test}) => test(txt)).map(x => x.b);
+}
+const NS_KIND = {tract: 'Tracts and pathways', reflex: 'Reflex arcs', nucleus: 'Nuclei and grey matter', region: 'Regions and lobes', circuit: 'Circuits and networks', system: 'Functional systems', vascular: 'Blood supply and CSF', transmitter: 'Neurotransmitter systems', physiology: 'Cellular physiology', cognition: 'Cognitive and behavioural networks', development: 'Development'};
+const DET_NS = [['patho', 'Anatomy and physiology'], ['clinical', 'Clinical correlation'], ['diagnosis', 'Testing at the bedside and in the lab'], ['treatment', 'Lesion syndromes'], ['prognosis', 'Development, plasticity and recovery']];
+function nsLinks(names) { return (names || []).map(n => resolveFind(n)).filter(Boolean); }
+function nsChips(e) {
+  if (!D.ns || !D.ns.length || e.cat === 'neuroscience') return '';
+  const n = norm(e.name);
+  const hits = D.ns.filter(x => x.ns && [...(x.ns.dx || []), ...(x.ns.signs || [])].some(k => norm(k) === n));
+  return hits.length ? `<h2 class="sec" id="d-ns">Neuroscience behind it <span class="count">${hits.length}</span></h2><div class="chips">${hits.map(b => `<a class="chip" href="${link(b)}">${esc(b.name)}</a>`).join('')}</div>` : '';
+}
+function viewNs(e) {
+  const x = e.ns || {}, c = e.case;
+  const rel = (e.ddx || []).map(d => ({e: byId.get(d.id), pt: d.pt})).filter(d => d.e);
+  const dxs = nsLinks(x.dx), sgs = nsLinks(x.signs);
+  const steps = [['Origin', x.origin], ['Course', x.course], ['Decussation', x.decussation], ['Termination', x.termination]].filter(s => s[1]);
+  const nav = [['n-glance', 'At a glance'], steps.length && ['n-path', 'Pathway'], x.lesions && ['n-les', 'Lesions'], e.feat && ['n-feat', 'Key facts'], e.inv && ['n-test', 'How to test'], e.det && ['n-depth', 'In depth'], c && ['n-case', 'Case'], e.qx && e.qx.length && ['n-qx', 'Questions'], ['n-rel', 'Related'], ['n-read', 'Read']].filter(Boolean);
+  return `<div class="entry"><div>${entryHead(e)}
+    <div class="toolrow">${langSeg()}</div>${defText(e)}
+    ${jumpNav(nav)}
+    <h2 class="sec" id="n-glance">At a glance</h2>
+    <dl class="glance">
+      ${x.kind ? `<dt>Type</dt><dd><a class="chip" href="#/browse/ns">${esc(NS_KIND[x.kind] || x.kind)}</a></dd>` : ''}
+      ${x.level ? `<dt>Level</dt><dd>${esc(x.level)}</dd>` : ''}
+      ${x.function ? `<dt>Function</dt><dd>${esc(x.function)}</dd>` : ''}
+      ${x.blood ? `<dt>Blood supply</dt><dd>${esc(x.blood)}</dd>` : ''}
+      ${x.transmitter ? `<dt>Transmitter</dt><dd>${esc(x.transmitter)}</dd>` : ''}
+      <dt>Localization</dt><dd><div class="chips">${(e.loc || []).map(l => `<a class="chip" href="#/browse/loc/${l}">${esc(locLabel(l))}</a>`).join('') || '<span class="muted small">—</span>'}</div></dd>
+    </dl>
+    ${steps.length ? `<h2 class="sec" id="n-path">Pathway</h2><ol class="nspath">${steps.map(([k, v]) => `<li><b>${k}</b><span>${esc(v)}</span></li>`).join('')}</ol>` : ''}
+    ${x.lesions && x.lesions.length ? `<h2 class="sec" id="n-les">What a lesion does</h2><div class="tw"><table class="nsles"><thead><tr><th>Lesion site</th><th>Result</th></tr></thead><tbody>${x.lesions.map(l => `<tr><td>${esc(l.site)}</td><td>${esc(l.effect)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${e.feat ? `<h2 class="sec" id="n-feat">Key facts</h2><ul class="list">${e.feat.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
+    ${e.inv ? `<h2 class="sec" id="n-test">How to test it</h2><ul class="list">${e.inv.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
+    ${detHTML(e.det, DET_NS, 'n-depth', e.srcmap)}
+    ${c ? `<h2 class="sec" id="n-case">Localization case <span class="st draft">invented for teaching</span></h2>
+      <div class="case"><dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Exam</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>
+      <div class="q">${esc(c.q)}</div><button class="btn" data-reveal style="margin-top:10px">Show answer</button><div class="a" hidden>${esc(c.a)}</div></div>` : ''}
+    ${e.qx && e.qx.length ? `<h2 class="sec" id="n-qx">Board-style questions <span class="st draft">invented for teaching</span></h2>
+      ${e.qx.map(q => `<div class="case bd"><p class="prose">${esc(q.stem)}</p><div class="q">${esc(q.q)}</div><ol class="opts" type="A">${q.opts.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
+      <button class="btn" data-reveal style="margin-top:6px">Show answer</button><div class="a" hidden><b>${LET[q.ans]}. ${esc(q.opts[q.ans])}</b> — ${esc(q.why)}</div></div>`).join('')}` : ''}
+    <h2 class="sec" id="n-rel">Related</h2>
+    ${rel.length ? `<ul class="ddx">${rel.map(r => `<li><a href="${link(r.e)}">${esc(r.e.name)}</a><span class="pt">${esc(r.pt)}</span></li>`).join('')}</ul>` : ''}
+    ${dxs.length ? `<h3 class="sec">Diseases that involve it</h3><div class="chips">${dxs.map(d => `<a class="chip" href="${link(d)}">${esc(d.name)}</a>`).join('')}</div>` : ''}
+    ${sgs.length ? `<h3 class="sec">Signs that test it</h3><div class="chips">${sgs.map(d => `<a class="chip" href="${link(d)}">${esc(d.name)}</a>`).join('')}</div>` : ''}
+    <h2 class="sec" id="n-read">Read</h2>${e.read && e.read.length ? `<ul class="list small">${e.read.map(bookRef).join('')}</ul>` : ''}
+    ${footer(e)}</div>${axisHTML(e.loc)}</div>`;
 }
 function viewDx(e) {
+  if (e.cat === 'neuroscience') return viewNs(e);
   const signs = (e.signs || []).map(id => byId.get(id)).filter(Boolean);
   const c = e.case;
   const ddx = (e.ddx || []).map(x => ({e: byId.get(x.id), pt: x.pt})).filter(x => x.e);
   const variants = (e.variants || []).map(id => byId.get(id)).filter(Boolean);
   const tempo = (e.tempo || []).join(' · ') || 'Not specified';
-  const nav = [['d-glance', 'At a glance'], e.feat && ['d-feat', 'Features'], (e.inv || e.more) && ['d-inv', 'Tests'], e.det && ['d-depth', 'In depth'], c && ['d-case', 'Case'], ['d-ddx', 'Differential'], ['d-sim', 'Similar'], ['d-signs', 'Signs'], e.read && e.read.length && ['d-read', 'Read']].filter(Boolean);
+  const nav = [['d-glance', 'At a glance'], e.feat && ['d-feat', 'Features'], (e.inv || e.more) && ['d-inv', 'Tests'], e.det && ['d-depth', 'In depth'], c && ['d-case', 'Case'], e.qx && e.qx.length && ['d-qx', 'Questions'], ['d-ddx', 'Differential'], ['d-sim', 'Similar'], ['d-signs', 'Signs'], ['d-read', 'Read']].filter(Boolean);
   return `<div class="entry"><div>${entryHead(e)}
     <div class="toolrow">${langSeg()}</div>${defText(e)}
     ${jumpNav(nav)}
@@ -466,23 +980,30 @@ function viewDx(e) {
     <dl class="glance">
       <dt>Tempo ${autoChip(e, 'tempo')}</dt><dd>${esc(tempo)}${e.tempoNote ? `<div class="small muted">${esc(e.tempoNote)}</div>` : ''}</dd>
       <dt>Localization ${autoChip(e, 'loc')}</dt><dd><div class="chips">${(e.loc || []).map(l => `<a class="chip" href="#/browse/loc/${l}">${esc(locLabel(l))}</a>`).join('') || '<span class="muted small">Not specified</span>'}</div></dd>
+      ${e.ichd ? `<dt>ICHD-3 (2018)</dt><dd><b>${esc(e.ichd.code)}</b> ${esc(e.ichd.title || '')}${/^A/.test(e.ichd.code) ? ' <span class="st auto">appendix</span>' : ''}${e.ichd.note ? `<div class="small muted">${esc(e.ichd.note)}</div>` : ''}</dd>` : ''}
       <dt>Group ${autoChip(e, 'sys')}</dt><dd><div class="chips">${(e.sys || []).map(s => `<a class="chip" href="#/browse/sys/${s}">${esc(sysLabel(s))}</a>`).join('')}</div></dd>
     </dl>
     ${e.feat ? `<h2 class="sec" id="d-feat">Key features</h2><ul class="list">${e.feat.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
     ${e.inv ? `<h2 class="sec" id="d-inv">Key investigations</h2><ul class="list">${e.inv.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
     ${!e.inv && e.more ? `<h2 class="sec" id="d-inv">Investigations &amp; management notes</h2><p class="prose">${esc(e.more)}</p>` : ''}
-    ${detHTML(e.det, DET_DX, 'd-depth')}
+    ${(() => { const bm = bmFor(e); return bm.length ? `<h2 class="sec" id="d-bm">Antibody / biomarker pages <span class="count">${bm.length}</span></h2><div class="chips">${bm.map(b => `<a class="chip" href="${link(b)}">${esc(b.name)}</a>`).join('')}</div>` : ''; })()}
+    ${(() => { const pg = pgFor(e); return pg.length ? `<h2 class="sec" id="d-pg">Pathogen pages <span class="count">${pg.length}</span></h2><div class="chips">${pg.map(b => `<a class="chip" href="${link(b)}">${esc(b.name.replace(/ \(pathogen\)$/, ''))}</a>`).join('')}</div>` : ''; })()}
+    ${nsChips(e)}
+    ${detHTML(e.det, DET_DX, 'd-depth', e.srcmap)}
     ${c ? `<h2 class="sec" id="d-case">Illustrative case <span class="st draft">invented for teaching</span></h2>
       <div class="case"><dl><dt>Patient</dt><dd>${esc(c.who)}</dd><dt>Story</dt><dd>${esc(c.story)}</dd><dt>Exam</dt><dd>${esc(c.exam)}</dd><dt>Tests</dt><dd>${esc(c.tests)}</dd></dl>
       <div class="q">${esc(c.q)}</div><button class="btn" data-reveal style="margin-top:10px">Show answer</button><div class="a" hidden>${esc(c.a)}</div>
       ${e.read && e.read.length ? `<div class="readmore"><span class="reftag">Read</span> ${e.read.map(refText).join('; ')}</div>` : ''}</div>` : ''}
+    ${e.qx && e.qx.length ? `<h2 class="sec" id="d-qx">Board-style questions <span class="st draft">invented for teaching</span></h2>
+      ${e.qx.map(x => `<div class="case bd"><p class="prose">${esc(x.stem)}</p><div class="q">${esc(x.q)}</div><ol class="opts" type="A">${x.opts.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
+      <button class="btn" data-reveal style="margin-top:6px">Show answer</button><div class="a" hidden><b>${LET[x.ans]}. ${esc(x.opts[x.ans])}</b> — ${esc(x.why)}</div></div>`).join('')}` : ''}
     <h2 class="sec" id="d-ddx">Differential — how to tell apart</h2>
     ${ddx.length ? `<ul class="ddx">${ddx.map(x => `<li><a href="${link(x.e)}">${esc(x.e.name)}</a><span class="pt">${esc(x.pt)}</span><button class="btn pair" data-pair="${esc(e.id)}|${esc(x.e.id)}" title="Compare side by side">${ICON.cmp}Compare</button></li>`).join('')}</ul>` : '<p class="small muted">No curated differential yet — see similar entries below.</p>'}
     <h2 class="sec" id="d-sim">Similar entries <span class="st auto">computed</span></h2><div id="simbox"><p class="small muted">Loading…</p></div>
     <h2 class="sec" id="d-signs">Signs linked to this disease</h2>
     ${signs.length ? `<div class="chips">${signs.map(s => `<a class="chip" href="${link(s)}">${esc(s.name)}</a>`).join('')}</div>` : '<p class="muted small">No linked signs yet.</p>'}
     ${e.more && e.inv ? `<details style="margin-top:22px"><summary class="more-toggle">Notes from Neuro Exam Assistant</summary><p class="prose small" style="margin-top:8px">${esc(e.more)}</p></details>` : ''}
-    ${e.read && e.read.length ? `<h2 class="sec" id="d-read">Read</h2><ul class="list small">${e.read.map(bookRef).join('')}</ul>` : ''}
+    <h2 class="sec" id="d-read">Read</h2>${e.read && e.read.length ? `<ul class="list small">${e.read.map(bookRef).join('')}</ul>` : ''}${(e.read || []).some(r => r.book === 'statpearls') ? '' : `<p class="small"><a href="${esc(statpearlsSearch(e.name))}" target="_blank" rel="noopener">Search StatPearls (NCBI Bookshelf) for this topic ↗</a></p>`}
     ${variants.length ? `<h2 class="sec">Other entries with this name</h2><div class="chips">${variants.map(v => `<a class="chip" href="${link(v)}">${esc(v.name)}</a>`).join('')}</div>` : ''}
     ${footer(e)}</div>${axisHTML(e.loc)}</div>`;
 }
@@ -534,13 +1055,75 @@ function groupCounts(field) {
   for (const d of D.dx) for (const k of d[field] || []) m.set(k, (m.get(k) || 0) + 1);
   return m;
 }
+// Shadow a book: every page that cites a given book, grouped by the chapter / section it points to
+let SHADOW = null;
+// A Read entry may cite several chapters/cases ("Case 1 …; Case 21 …"): give each its own group so diseases sharing a case sit together.
+function shParts(w) {
+  w = (w || '').trim();
+  return w ? w.split(/\s*;\s*(?=(?:Case|Chapter|Ch\.?|Section|Part|Topic|บทที่)\s*\d)/i).map(x => x.trim()).filter(Boolean) : [''];
+}
+function shadowIndex() {
+  if (SHADOW) return SHADOW;
+  SHADOW = new Map();
+  for (const e of [...D.dx, ...D.ns]) {
+    const seen = new Set();
+    for (const r of e.read || []) {
+      const k = r.book + '|' + (r.where || '') + '|' + (r.auto ? 1 : 0);
+      if (!r.book || seen.has(k)) continue; seen.add(k);
+      if (!SHADOW.has(r.book)) SHADOW.set(r.book, {refs: [], pages: new Set(), direct: new Set()});
+      const s = SHADOW.get(r.book);
+      for (const w of shParts(r.where)) s.refs.push({e, where: w, auto: !!r.auto});
+      s.pages.add(e.id); if (!r.auto) s.direct.add(e.id);
+    }
+  }
+  return SHADOW;
+}
+const shadowPins = () => LS.get('shadowBooks', []).filter(k => shadowIndex().has(k));
+function shadowList(v) {
+  const fold = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const toks = fold(v).split(/[\s,;.]+/).filter(Boolean);
+  const rows = [...shadowIndex().entries()].map(([k, s]) => ({k, s, b: D.meta.books[k] || {}}))
+    .filter(x => { if (!toks.length) return true; const hay = fold([x.k, x.b.short, x.b.title, x.b.author, x.b.edition, x.b.publisher].join(' ')); return toks.every(t => hay.includes(t)); })
+    .sort((a, b) => b.s.pages.size - a.s.pages.size || (a.b.short || a.k).localeCompare(b.b.short || b.k));
+  return rows.length ? `<div class="groups shbooks">${rows.map(x => `<a href="#/browse/shadow/${encodeURIComponent(x.k)}"><span>${esc(x.b.short || x.b.title || x.k)}${x.b.edition ? ` <span class="faint small">${esc(x.b.edition)}</span>` : ''}</span><span class="c" title="${x.s.direct.size} cited directly · ${x.s.pages.size} pages in all">${x.s.pages.size}</span></a>`).join('')}</div>` : '<p class="empty">No book matches.</p>';
+}
+function viewShadow(key) {
+  const idx = shadowIndex();
+  if (!key) {
+    return `<div class="shadowintro"><span class="shtag">Shadow</span> <span class="small muted">Pick a book that the lexicon uses as a reference. Its pages appear grouped by chapter, so you can read the book alongside the lexicon and see which diseases it covers. The book is then added to Browse as a grey <b>Shadow</b> tab.</span></div>
+      <input id="shq" class="shq" type="search" placeholder="Search a book, author, publisher or university… (${idx.size} books)" autocomplete="off" aria-label="Search reference books">
+      <div id="shlist">${shadowList('')}</div>`;
+  }
+  const s = idx.get(key), b = D.meta.books[key] || {};
+  if (!s) return `<p class="empty">This book is not cited by any page.</p><p><a href="#/browse/shadow">Choose another book</a></p>`;
+  const groups = new Map();
+  for (const r of s.refs) { const g = r.where || ''; if (!groups.has(g)) groups.set(g, new Map()); const gm = groups.get(g); if (!gm.has(r.e.id) || !r.auto) gm.set(r.e.id, r); }
+  const named = [...groups.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+  const row = r => `<li><a href="${link(r.e)}">${stDot(r.e)}${esc(r.e.name)}</a>${r.auto ? ' <span class="st auto" title="Found by scanning the book">also covered</span>' : ''}</li>`;
+  const sortR = m => [...m.values()].sort((a, b) => (a.auto - b.auto) || a.e.name.localeCompare(b.e.name));
+  const loose = groups.get('');
+  return `<section class="shadowbox">
+      <div class="shhead"><span class="shtag">Shadow</span><a class="small" href="#/browse/shadow">Choose another book</a></div>
+      <h3 class="shtitle">${esc(b.title || b.short || key)}</h3>
+      <p class="small muted" style="margin:2px 0 8px">${[b.edition, b.publisher].filter(Boolean).map(esc).join(' · ')}</p>
+      <p class="small" style="margin:0"><b>${s.pages.size}</b> pages use this book — <b>${s.direct.size}</b> cite it directly${s.pages.size > s.direct.size ? `, ${s.pages.size - s.direct.size} more were found by scanning its text` : ''} · <b>${named.length}</b> chapters / sections</p>
+      <div class="actions" style="margin-top:10px"><button class="btn ghost" data-shunpin="${esc(key)}">Remove from Browse</button></div>
+    </section>
+    ${named.length > 6 ? `<details class="shtoc"><summary>Chapters in this book (${named.length})</summary><ol class="small">${named.map((g, i) => `<li><a href="#" data-jump="sh-${i}">${esc(g)}</a> <span class="faint">${groups.get(g).size}</span></li>`).join('')}</ol></details>` : ''}
+    ${named.map((g, i) => `<h3 class="sec shsec" id="sh-${i}">${esc(g)} <span class="count">${groups.get(g).size}</span></h3><ul class="plain">${sortR(groups.get(g)).map(row).join('')}</ul>`).join('')}
+    ${loose ? `<details class="shloose"><summary>Pages without a chapter reference <span class="count">${loose.size}</span></summary><ul class="plain">${sortR(loose).map(row).join('')}</ul></details>` : ''}`;
+}
 function viewBrowse(arg) {
-  const [mode, key] = arg.split('/');
-  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['curated', 'Curated']];
+  const [mode, rawKey] = arg.split('/');
+  const key = rawKey ? decodeURIComponent(rawKey) : rawKey;
+  const modes = [['sys', 'By group'], ['loc', 'By localization'], ['tempo', 'By tempo'], ['az', 'Diseases A–Z'], ['signs', 'Signs A–Z'], ['bm', 'Biomarkers'], ['pg', 'Pathogens'], ['ns', 'Neuroscience'], ['curated', 'Curated'], ['status', 'Status 🟢/🟡'], ['shadow', 'Shadow a book']];
   const m = mode || 'sys';
+  if (m === 'shadow' && key && shadowIndex().has(key)) { const p = LS.get('shadowBooks', []); if (!p.includes(key)) LS.set('shadowBooks', [...p, key]); }
   let body = '';
-  const nav = `<div class="seg">${modes.map(([k, l]) => `<button data-browse="${k}" class="${m === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
-  const list = (arr) => `<ul class="plain">${arr.map(e => `<li><a href="${link(e)}">${esc(e.name)}</a>${e.cur ? '<span class="st cur">curated</span>' : ''}</li>`).join('')}</ul>`;
+  const pins = shadowPins();
+  const nav = `<div class="seg">${modes.map(([k, l]) => `<button data-browse="${k}" class="${m === k && !(k === 'shadow' && key) ? 'on' : ''}${k === 'shadow' ? ' shpick' : ''}">${l}</button>`).join('')}${pins.map(k => { const sh = (D.meta.books[k] || {}).short || k; return `<span class="shwrap${m === 'shadow' && key === k ? ' on' : ''}"><button class="shadow" data-go="#/browse/shadow/${encodeURIComponent(k)}" title="${esc((D.meta.books[k] || {}).title || k)}">Shadow · ${esc(sh.slice(0, 30))}${sh.length > 30 ? '…' : ''}</button><button class="shx" data-shunpin="${esc(k)}" aria-label="Remove this book from Browse" title="Remove this book — then pick another">×</button></span>`; }).join('')}</div>`;
+  if (m === 'shadow') return `<h2 class="sec">Browse</h2>${nav}${viewShadow(key)}`;
+  const list = (arr) => `<ul class="plain">${arr.map(e => `<li><a href="${link(e)}">${stDot(e)}${esc(e.name)}</a>${e.cur ? '<span class="st cur">curated</span>' : ''}</li>`).join('')}</ul>`;
   if ((m === 'sys' || m === 'loc' || m === 'tempo') && key) {
     const label = m === 'sys' ? sysLabel(key) : m === 'loc' ? locLabel(key) : key;
     const arr = D.dx.filter(d => (d[m] || []).includes(key)).sort((a, b) => (b.cur ? 1 : 0) - (a.cur ? 1 : 0) || a.name.localeCompare(b.name));
@@ -558,6 +1141,31 @@ function viewBrowse(arg) {
     const letters = [...new Set(pool.map(first))].sort();
     const L = key && letters.includes(key) ? key : letters[0];
     body = `<div class="az">${letters.map(l => `<a href="#/browse/${m}/${l}" class="${l === L ? 'on' : ''}">${l}</a>`).join('')}</div>${list(pool.filter(e => first(e) === L).sort((a, b) => a.name.localeCompare(b.name)))}`;
+  } else if (m === 'status') {
+    const S = key === 'g' ? 'g' : 'y', arr = D.dx.filter(d => d.st === S);
+    const nG = D.dx.filter(d => d.st === 'g').length, nY = D.dx.filter(d => d.st === 'y').length;
+    const groups = new Map();
+    for (const d of arr) { const g = (d.sys || ['other'])[0]; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(d); }
+    body = `<div class="seg" style="margin:10px 0"><button data-go="#/browse/status/y" class="${S === 'y' ? 'on' : ''}">🟡 รอข้อมูลเพิ่มเติม (${nY})</button><button data-go="#/browse/status/g" class="${S === 'g' ? 'on' : ''}">🟢 ข้อมูลเชิงลึกแล้ว (${nG})</button></div>
+      <p class="small muted">${S === 'y' ? '🟡 = the in-depth page was written without a disease-specific source in the library. Add a monograph article for the disease to the “please update” folder and it will be enriched and turn 🟢.' : '🟢 = the in-depth page is backed by at least one source in the library (or was hand-curated with references).'}</p>
+      ${[...groups.entries()].sort((a, b) => sysLabel(a[0]).localeCompare(sysLabel(b[0]))).map(([g, l]) => `<h3 class="sec">${esc(sysLabel(g))} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('')}`;
+  } else if (m === 'bm') {
+    const arr = D.dx.filter(d => d.cat === 'biomarker');
+    const grp = d => (d.sys || []).includes('myopathy') ? 'Myositis antibodies' : (d.sys || [])[0] === 'neurodegenerative' ? 'Prion disease markers' : 'Neural antibodies (encephalitis and related)';
+    const groups = new Map();
+    for (const d of arr) { const g = grp(d); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(d); }
+    body = `<p class="small muted">One page per antibody: what it targets, the syndrome it marks, cancer and organ risks, and how it changes management.</p>
+      ${[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([g, l]) => `<h3 class="sec">${esc(g)} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('') || '<p class="empty">No biomarker pages yet.</p>'}`;
+  } else if (m === 'ns') {
+    const groups = new Map();
+    for (const d of D.ns) { const g = NS_KIND[(d.ns || {}).kind] || 'Other topics'; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(d); }
+    const order = Object.values(NS_KIND);
+    body = `<p class="small muted">Neuroanatomy, tracts, circuits and physiology: where each pathway runs, what it does, how to test it at the bedside and what a lesion looks like.</p>
+      ${[...groups.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0])).map(([g, l]) => `<h3 class="sec">${esc(g)} <span class="count">${l.length}</span></h3>${list(l.sort((a, b) => a.name.localeCompare(b.name)))}`).join('') || '<p class="empty">No neuroscience pages yet.</p>'}`;
+  } else if (m === 'pg') {
+    const arr = D.dx.filter(d => d.cat === 'pathogen').sort((a, b) => a.name.localeCompare(b.name));
+    body = `<p class="small muted">One page per organism: where it lives, who gets it, the CNS syndromes it causes, how to confirm it and how to treat it.</p>
+      <h3 class="sec">Fungi (neuromycoses) <span class="count">${arr.length}</span></h3>${arr.length ? list(arr) : '<p class="empty">No pathogen pages yet.</p>'}`;
   } else if (m === 'curated') {
     body = `<h2 class="sec">Curated diseases <span class="count">${D.dx.filter(d => d.cur).length}</span></h2>${list(D.dx.filter(d => d.cur).sort((a, b) => a.name.localeCompare(b.name)))}
       <h2 class="sec">Curated signs <span class="count">${D.signs.filter(d => d.cur).length}</span></h2>${list(D.signs.filter(d => d.cur).sort((a, b) => a.name.localeCompare(b.name)))}`;
@@ -601,18 +1209,13 @@ function viewAbout() {
   const v = D.version, b = D.meta.books;
   const last = sync.last();
   return `<h2 class="sec">Settings</h2><div class="settings">
-  <section class="card"><h3>Literature watch</h3><p class="small muted">Once a day when online, Sanctum checks recent PubMed titles (including AAN journals) and raises <b>New entities!</b> for disease or sign names that are not in the lexicon. Only fixed search terms leave the device.</p>
-    <div class="actions"><button class="btn${sync.enabled() ? ' on' : ''}" data-syncon>${sync.enabled() ? '✓ Daily check on' : 'Daily check off'}</button>
-    ${Object.entries(SYNC_SOURCES).map(([k, s]) => `<button class="btn${sync.sources().includes(k) ? ' on' : ''}" data-syncsrc="${k}">${sync.sources().includes(k) ? '✓ ' : ''}${s.label}</button>`).join('')}
-    <a class="btn primary" href="#/new">Open watch list${state.newCount ? ` (${state.newCount})` : ''}</a></div>
-    <p class="small muted" style="margin:10px 0 6px">${last ? 'Last checked ' + new Date(last).toLocaleString() : 'Not checked on this device yet.'}</p>
-    <div class="actions"><span class="small muted">Remind me to go online every</span><div class="seg">${[1, 3, 7, 14].map(n => `<button class="${remindDays() === n ? 'on' : ''}" data-remind="${n}">${n} day${n > 1 ? 's' : ''}</button>`).join('')}</div>
-    <button class="btn${LS.get('notify', false) ? ' on' : ''}" data-notifyon>${LS.get('notify', false) ? '✓ Desktop notifications' : 'Allow desktop notifications'}</button></div></section>
-  <section class="card"><h3>Lexicon updates</h3><div class="form"><label for="src">Data source (folder with version.json)<input id="src" type="url" placeholder="https://example.org/sanctum/data/" value="${esc(state.source)}"></label>
-    <div class="actions"><button class="btn primary" data-update>Check for updates</button><button class="btn ghost" data-savesrc>Save source</button></div>
-    <p class="small muted" id="updmsg" style="margin:0">Works offline with the copy on this device; downloads a newer lexicon when one is published.</p></div></section>
-  <section class="card"><h3>Install for offline use</h3><p class="small muted">Put Sanctum on your desktop, Dock, Start menu or home screen.</p><a class="btn" href="#/install">How to install</a></section>
-  <section class="card"><h3>Appearance</h3><div class="actions"><div class="seg">${['system', 'light', 'dark'].map(t => `<button data-theme-set="${t}" class="${(LS.get('theme', 'system')) === t ? 'on' : ''}">${t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('')}</div>${langSeg()}</div></section>
+  <section class="card"><h3>Appearance</h3>
+    <p class="small muted" style="margin:0 0 10px">Themes change colour and heading type only; nothing extra is downloaded. Your choice is remembered on this device.</p>
+    <div class="skins">${SKINS.map(x => `<button class="skin" data-skin-set="${x[0]}" aria-pressed="${LS.get('skin', 'oxford') === x[0]}"><span class="sw">${x[3].map(c => `<i style="background:${c}"></i>`).join('')}</span><b>${x[1]}</b><span class="n">${x[2]}</span></button>`).join('')}</div>
+    <div class="actions"><div class="seg" role="group" aria-label="Mode">${['system', 'light', 'dark'].map(t => `<button data-theme-set="${t}" class="${(LS.get('theme', 'system')) === t ? 'on' : ''}">${t === 'system' ? 'Auto' : t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('')}</div>
+      <div class="seg" role="group" aria-label="Layout">${[['min', 'Minimalist'], ['max', 'Maximized']].map(x => `<button data-layout-set="${x[0]}" class="${LS.get('layout', 'min') === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div>
+      <div class="seg" role="group" aria-label="Disease page sections">${[['open', 'Expanded'], ['fold', 'Toggled']].map(x => `<button data-sec-set="${x[0]}" class="${LS.get('sections', 'open') === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div>
+      <div class="seg" role="group" aria-label="Text size">${[['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(x => `<button data-size-set="${x[0]}" class="${LS.get('size', 'm') === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div>${langSeg()}</div></section>
   <section class="card"><h3>About</h3><p class="small" style="margin:0 0 8px"><b>For education only — not a diagnostic tool.</b> Entries are drafts until a neurologist marks them reviewed; illustrative cases are invented for teaching.</p>
     <p class="small muted" style="margin:0">App ${APP_VERSION} · data ${esc(v.version)} · ${v.counts.signs} signs · ${v.counts.diseases} diseases · ${v.counts.curatedDiseases} curated diseases · ${v.counts.curatedSigns} curated signs</p>
     <details style="margin-top:12px"><summary class="more-toggle">Study sources</summary><ul class="list small" style="margin-top:8px">${Object.values(b).map(x => `<li>${esc(x.title)}${x.edition ? ', ' + esc(x.edition) : ''}${x.publisher ? '. ' + esc(x.publisher) : ''}</li>`).join('')}</ul>
@@ -626,6 +1229,7 @@ function viewAbout() {
 function setTabs(view) {
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.v === view));
   const ib = $('.iconbtn[data-v=about]'); if (ib) ib.classList.toggle('on', view === 'about');
+  const gb = $('.gushbtn'); if (gb) gb.classList.toggle('on', view === 'gush');
   const n = $('.nav a[data-v=compare] .n'); if (n) n.textContent = state.cmp.length || '';
   const f = $('.nav a[data-v=saved] .n'); if (f) f.textContent = state.fav.length || '';
   const s = $('.nav a[data-v=home]'); if (s) s.setAttribute('href', state.q ? '#/q/' + encodeURIComponent(state.q) : '#/');
@@ -663,17 +1267,21 @@ function render() {
   else if (view === 'about') { html = viewAbout(); setTabs('about'); }
   else if (view === 'install') { html = viewInstall(); setTabs('about'); }
   else if (view === 'article') { html = viewArticle(arg); setTabs(''); }
+  else if (view === 'quiz') { html = viewQuiz(); setTabs('quiz'); }
+  else if (view === 'gush') { html = viewGush(arg); setTabs('gush'); }
   else if (view === 'added') { html = viewAdded(arg); setTabs(''); if (arg && arg !== 'all') after = () => { const el = document.getElementById(arg); if (el) el.scrollIntoView(); }; }
-  else if (view === 'new') { html = '<p class="muted">Loading…</p>'; setTabs('new'); after = async () => { const h = await viewNew(); if (route().view === 'new') $('#main').innerHTML = h; }; }
   else html = viewHome();
   if (!(view === 'sign' || view === 'dx')) document.title = 'Sanctum of Neurology';
   if (view !== 'q' && view !== 'home') { $('#q').value = ''; if (document.activeElement === $('#q')) $('#q').blur(); }   // the query stays behind the Search tab
   { const c = $('#qclear'); if (c) c.hidden = !$('#q').value; }
   main.innerHTML = html;
+  gushRoute(view, arg);
   const key = location.hash;
   if (scrollMemo.has(key) && (view === 'q' || view === 'browse' || view === 'saved' || view === 'home')) window.scrollTo(0, scrollMemo.get(key));
   else if (view !== 'q') window.scrollTo(0, 0);
+  foldSections(view);
   if (after) after();
+  clozeApply(view);
 }
 function toast(msg) {
   const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
@@ -733,11 +1341,29 @@ function wire() {
   });
   $('#qclear').onclick = () => { q.value = ''; state.q = ''; go('#/'); q.focus(); };
   document.addEventListener('keydown', ev => {
-    if (ev.key === '/' && document.activeElement !== q && !/input|textarea/i.test(document.activeElement.tagName)) { ev.preventDefault(); q.focus(); q.select(); }
+    if (ev.key === '/' && !G.open && document.activeElement !== q && !/input|textarea/i.test(document.activeElement.tagName)) { ev.preventDefault(); q.focus(); q.select(); }
   });
   window.addEventListener('scroll', () => { scrollMemo.set(location.hash, window.scrollY); }, {passive: true});
   document.addEventListener('toggle', ev => { if (ev.target.closest && ev.target.closest('.summary')) LS.set('sumOpen', ev.target.open); }, true);
-  window.addEventListener('hashchange', render);
+  /* back / forward buttons: track position in our own history entries */
+  let navMax = 0;
+  function navSync() {
+    let i = history.state && typeof history.state.i === 'number' ? history.state.i : null;
+    if (i === null) { const prev = window.__navI; i = prev === undefined ? 0 : prev + 1; navMax = i; try { history.replaceState({i}, ''); } catch (e) {} }
+    window.__navI = i;
+    const b = $('#navback'), f = $('#navfwd');
+    if (b) b.disabled = i <= 0;
+    if (f) f.disabled = i >= navMax;
+  }
+  $('#navback').onclick = () => history.back();
+  $('#navfwd').onclick = () => history.forward();
+  document.addEventListener('keydown', ev => { if (ev.altKey && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') && !/input|textarea/i.test(document.activeElement.tagName)) { ev.preventDefault(); ev.key === 'ArrowLeft' ? history.back() : history.forward(); } });
+  window.addEventListener('hashchange', () => { render(); navSync(); });
+  gushEvents();
+  navSync();
+  document.addEventListener('change', ev => { if (ev.target.id === 'qzsys') { QZ.sys = ev.target.value; LS.set('qzSys', QZ.sys); QZ.cur = null; render(); } });
+  document.addEventListener('click', ev => { const h = ev.target.closest && ev.target.closest('h2.sec.fold'); if (h && !ev.target.closest('a')) foldToggle(h); });
+  document.addEventListener('keydown', ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('h2.sec.fold')) { ev.preventDefault(); foldToggle(ev.target); } });
   document.addEventListener('click', async ev => {
     const t = ev.target.closest('button'); if (!t) return;
     const d = t.dataset;
@@ -756,14 +1382,27 @@ function wire() {
     else if (d.cmprm) { state.cmp = state.cmp.filter(x => x !== d.cmprm); saveState(); render(); }
     else if ('cmpclear' in d) { state.cmp = []; saveState(); render(); }
     else if ('cmpadd' in d) { if (!state.cmp.includes(d.cmpadd) && state.cmp.length < 4) state.cmp.push(d.cmpadd); saveState(); render(); const i = $('#cmpq'); if (i && !i.disabled) i.focus(); }
-    else if (d.jump) { const el = document.getElementById(d.jump); if (el) window.scrollTo({top: el.getBoundingClientRect().top + window.scrollY - ($('.top').offsetHeight + 12), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }
+    else if (d.jump) { const el = document.getElementById(d.jump); if (el && el.classList.contains('fold')) foldToggle(el, true); if (el) window.scrollTo({top: el.getBoundingClientRect().top + window.scrollY - ($('.top').offsetHeight + 12), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); }
+    else if (d.go) { go(d.go); }
+    else if (d.qzmode) { QZ.mode = d.qzmode; LS.set('qzMode', QZ.mode); QZ.cur = null; QZ.n = QZ.ok = 0; render(); }
+    else if ('qzshow' in d) { QZ.done = true; render(); }
+    else if ('qznext' in d) { QZ.cur = null; render(); window.scrollTo(0, 0); }
+    else if (d.qzgrade) { qzGrade(QZ.cur.id, d.qzgrade === '1'); QZ.cur = null; render(); window.scrollTo(0, 0); }
+    else if (d.bdpick !== undefined && QZ.mode === 'board') { if (!QZ.done) { const i = +d.bdpick, ok = i === QZ.cur.x.ans; QZ.done = true; QZ.picked = i; QZ.n++; if (ok) QZ.ok++; qzGrade('q:' + QZ.cur.x.id, ok); render(); } }
+    else if (d.qzpick) { if (!QZ.done) { QZ.done = true; QZ.picked = d.qzpick; QZ.n++; const ok = d.qzpick === QZ.cur.id; if (ok) QZ.ok++; qzGrade(QZ.cur.id, ok); render(); } }
     else if ('reveal' in d) { const a = t.nextElementSibling; a.hidden = !a.hidden; t.textContent = a.hidden ? 'Show answer' : 'Hide answer'; }
     else if (d.copy) { try { await navigator.clipboard.writeText(d.copy); toast('Copied'); } catch (e) { toast(d.copy); } }
+    else if (d.shunpin) { LS.set('shadowBooks', LS.get('shadowBooks', []).filter(x => x !== d.shunpin)); toast('Book removed — choose another'); go('#/browse/shadow'); }
     else if (d.browse) go('#/browse/' + d.browse);
     else if ('clearhist' in d) { state.hist = []; saveState(); render(); }
     else if ('update' in d) { state.source = $('#src').value.trim(); saveState(); checkUpdate(true); }
     else if ('savesrc' in d) { state.source = $('#src').value.trim(); saveState(); toast('Source saved'); }
     else if (d.themeSet) { LS.set('theme', d.themeSet); applyTheme(); render(); }
+    else if (d.skinSet) { LS.set('skin', d.skinSet); applyTheme(); render(); }
+    else if (d.foldall != null) { document.querySelectorAll('h2.sec.fold').forEach(h => foldToggle(h, d.foldall === '1')); }
+    else if (d.secSet) { LS.set('sections', d.secSet); render(); }
+    else if (d.layoutSet) { LS.set('layout', d.layoutSet); applyTheme(); render(); }
+    else if (d.sizeSet) { LS.set('size', d.sizeSet); applyTheme(); render(); }
     else if ('syncnow' in d) { t.disabled = true; await sync.run(true); if (route().view === 'new') render(); }
     else if (d.entall) {
       // bulk: every item in the source group (default "new") gets the chosen status; one tap to undo
@@ -786,6 +1425,7 @@ function wire() {
     else if (d.syncsrc) { const cur = sync.sources(); LS.set('syncSrc', cur.includes(d.syncsrc) ? cur.filter(x => x !== d.syncsrc) : [...cur, d.syncsrc]); render(); }
   });
   document.addEventListener('input', ev => {
+    if (ev.target.id === 'shq') { $('#shlist').innerHTML = shadowList(ev.target.value); return; }
     if (ev.target.id !== 'cmpq') return;
     const box = $('#cmpres'); const v = ev.target.value.trim();
     if (!v) { box.hidden = true; return; }
@@ -794,12 +1434,22 @@ function wire() {
     box.hidden = false;
     box.innerHTML = list.length ? list.map(x => `<button data-cmpadd="${esc(x.e.id)}">${esc(x.e.name)}</button>`).join('') : '<div class="small muted" style="padding:8px 12px">No disease matches</div>';
   });
-  window.addEventListener('online', () => { checkUpdate(false); sync.maybeAuto(); if (route().view === 'home') render(); });
+  window.addEventListener('online', () => { checkUpdate(false); if (route().view === 'home') render(); });
   window.addEventListener('offline', () => { if (route().view === 'home') render(); });
 }
+const SKINS = [
+  ['oxford', 'Oxford', 'Oxford blue on warm white with antique gold. Quiet and scholarly.', ['#FBFAF6', '#002147', '#8A6A1C']],
+  ['ivy', 'Ivy League', 'Crimson on ivory. Formal and traditional.', ['#FBFAF7', '#8C1D2F', '#6B5B3E']],
+  ['cambridge', 'Cambridge', 'Deep green with pale blue. Warm and calm.', ['#F8FAF7', '#1F4D3A', '#3F6E8F']],
+  ['karolinska', 'Karolinska', 'Plum on white, one clean sans. Modern and airy.', ['#FAF9F8', '#4F0433', '#8A5A78']]
+];
 function applyTheme() {
-  const t = LS.get('theme', 'system');
-  if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+  const root = document.documentElement, t = LS.get('theme', 'system'), k = LS.get('skin', 'oxford'), z = LS.get('size', 'm');
+  if (t === 'system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', t);
+  root.setAttribute('data-skin', SKINS.some(x => x[0] === k) ? k : 'oxford');
+  if (z === 'm') root.removeAttribute('data-size'); else root.setAttribute('data-size', z);
+  root.setAttribute('data-layout', LS.get('layout', 'min') === 'max' ? 'max' : 'min');
+  try { const bg = getComputedStyle(root).getPropertyValue('--bg').trim(); if (bg) document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', bg)); } catch (e) {}
 }
 
 // ------------------------------------------------------------ literature watch (PubMed / AAN journals)
@@ -917,6 +1567,7 @@ function daysSince(t) { return t ? Math.floor((Date.now() - t) / 864e5) : null; 
 function remindDays() { return LS.get('remindDays', 7); }
 // Banner on the home screen: alarm with an Update button when online, or a reminder to go online when the last check is old.
 function reminderHTML() {
+  return '';
   const online = navigator.onLine, d = daysSince(sync.last()), n = state.newCount || 0;
   if (n) return `<div class="alarmbar"><span class="msg"><span class="dot"></span> <b>New entities!</b> ${n} disease/sign name${n > 1 ? 's' : ''} from recent PubMed/AAN papers ${n > 1 ? 'are' : 'is'} not in the lexicon.
     ${online ? '' : ' <span class="muted">Connect to the internet to refresh the evidence and download lexicon updates.</span>'}</span><span class="sp"></span>
@@ -969,6 +1620,7 @@ async function viewNew() {
 // ------------------------------------------------------------ boot
 async function boot() {
   applyTheme();
+  clozeSwitch();
   handleQueryString();
   try { prepare(await loadData()); }
   catch (e) { $('#main').innerHTML = `<p class="empty">Could not load the lexicon (${esc(e.message)}). If you opened index.html directly from disk, use the single-file build or serve the folder over http.</p>`; return; }
@@ -976,15 +1628,147 @@ async function boot() {
   render();
   if (!matchMedia('(hover:none)').matches && route().view === 'home') $('#q').focus();
   if ('serviceWorker' in navigator && /^https?:/.test(location.protocol) && !document.getElementById('inline-data')) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    const hadCtl = !!navigator.serviceWorker.controller; let reloaded = false;
+    navigator.serviceWorker.register('sw.js', {updateViaCache: 'none'}).then(reg => {
+      document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) reg.update().catch(() => {}); });
+    }).catch(() => {});
+    // a new app version took over: reload once so the new screens/buttons (e.g. Quiz tab) appear
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtl && !reloaded) { reloaded = true; location.reload(); } });
   }
   setTimeout(() => checkUpdate(false), 1500);
-  refreshAlarm().then(() => { if (route().view === 'home') render(); }); setTimeout(() => sync.maybeAuto(), 3000);
+  
   // while the app stays open: re-check every 6 hours when online
   setInterval(() => { if (navigator.onLine) checkUpdate(false); }, 30 * 60e3);   // lexicon: every 30 min while open
   document.addEventListener('visibilitychange', () => { if (!document.hidden && navigator.onLine) checkUpdate(false); });
-  setInterval(() => { if (navigator.onLine) sync.maybeAuto(); else if (route().view === 'home') render(); }, 6 * 3600e3);
-  window.__sanctum = {search, norm, D: () => D, extractEntities, knownInLexicon, sync, refreshAlarm};
+  window.__sanctum = {checkUpdate, search, norm, D: () => D, extractEntities, knownInLexicon, sync, refreshAlarm, gush: {G, gFam, GQ, gKind, gEligible}};
 }
+// ------------------------------------------------------------ Cloze it
+// Active-recall mode: key words on disease and sign pages become blanks; tap one blank to reveal only that word.
+// The words are NOT guessed here: build.py (tools/cloze_terms.py) stores the exact strings per entry in e.cz
+// {d: disease names, f: features, i: investigations, t: treatments}; this code only finds those listed strings.
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const CZ_TYPE = {d: 'disease', f: 'feature', i: 'investigation', t: 'treatment'};
+const CZ_SEL = '.entry .def, .entry .list li, .entry .prose, .entry .thd, .entry .case dd, .entry .case .q, .entry .case .a, .entry .ddx .pt';
+const CZ_SKIP = 'a, button, h1, h2, h3, .bd, .chips, .foot, .readmore, .small, .opts, .cz';
+let clozeOn = LS.get('cloze', false) === true;          // default OFF
+function clozeSwitch() {
+  const b = $('#czsw'); if (!b) return;
+  b.setAttribute('aria-checked', String(clozeOn));
+  b.classList.toggle('on', clozeOn);
+}
+function clozeTerms(e) {
+  const out = [];
+  for (const k of ['d', 'f', 'i', 't']) for (const t of ((e.cz || {})[k] || [])) if (t && t.length >= 2) out.push([t, k]);
+  return out.sort((a, b) => b[0].length - a[0].length);
+}
+function foldSections(view) {
+  if (!(view === 'dx' || view === 'sign') || LS.get('sections', 'open') !== 'fold') return;
+  const root = document.querySelector('.entry > div:first-child'); if (!root) return;
+  const heads = [...root.querySelectorAll(':scope > h2.sec')]; if (heads.length < 3) return;
+  heads.forEach((h, i) => {
+    const body = document.createElement('div'); body.className = 'secbody';
+    let n = h.nextElementSibling;
+    while (n && !n.matches('h2.sec') && !n.matches('.foot')) { const nx = n.nextElementSibling; body.appendChild(n); n = nx; }
+    h.after(body);
+    const open = i < 2;
+    h.classList.add('fold'); h.tabIndex = 0; h.setAttribute('role', 'button'); h.setAttribute('aria-expanded', open ? 'true' : 'false');
+    body.hidden = !open;
+  });
+  const bar = document.createElement('div'); bar.className = 'foldbar';
+  bar.innerHTML = '<button type="button" data-foldall="1">Expand all</button><button type="button" data-foldall="0">Collapse all</button>';
+  heads[0].before(bar);
+}
+function foldToggle(h, force) {
+  const body = h.nextElementSibling; if (!body || !body.classList.contains('secbody')) return;
+  const open = force == null ? body.hidden : force;
+  body.hidden = !open; h.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function clozeApply(view) {
+  const bar = $('#czbar'); if (bar) bar.remove();
+  if (!clozeOn || !(view === 'dx' || view === 'sign')) return;
+  const e = byId.get(route().arg); if (!e) return;
+  const terms = clozeTerms(e); if (!terms.length) return;
+  const kind = new Map(terms.map(([t, k]) => [t.toLowerCase(), [t, k]]));
+  const lit = terms.map(([t]) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const rx = new RegExp(`(?<![\\w-])(?:${lit.join('|')})(?![\\w-])`, 'gi');
+  let n = 0;
+  document.querySelectorAll(CZ_SEL).forEach(root => {
+    if (root.closest(CZ_SKIP)) return;
+    const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {acceptNode: t => t.parentElement.closest(CZ_SKIP) && t.parentElement.closest(CZ_SKIP) !== root.closest(CZ_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT});
+    const nodes = []; while (tw.nextNode()) nodes.push(tw.currentNode);
+    for (const tn of nodes) {
+      if (tn.parentElement.closest(CZ_SKIP)) continue;
+      const txt = tn.nodeValue; rx.lastIndex = 0;
+      let m, last = 0, frag = null;
+      while ((m = rx.exec(txt))) {
+        const hit = kind.get(m[0].toLowerCase());
+        if (!hit || (hit[0].length <= 4 && m[0] !== hit[0])) continue;   // short abbreviations: exact case only (MG ≠ mg)
+        frag = frag || document.createDocumentFragment();
+        if (m.index > last) frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'cz'; b.dataset.type = CZ_TYPE[hit[1]]; b.dataset.state = 'hidden';
+        b.setAttribute('aria-pressed', 'false'); b.setAttribute('aria-label', `Hidden ${CZ_TYPE[hit[1]]}. Press to reveal.`);
+        const sp = document.createElement('span'); sp.className = 'cz__t'; sp.textContent = m[0]; sp.setAttribute('aria-hidden', 'true');
+        b.appendChild(sp); frag.appendChild(b); n++; last = m.index + m[0].length;
+      }
+      if (frag) { if (last < txt.length) frag.appendChild(document.createTextNode(txt.slice(last))); tn.parentNode.replaceChild(frag, tn); }
+    }
+  });
+  if (!n) return;
+  const anchor = $('.entry .toolrow'); if (!anchor) return;
+  const el = document.createElement('div'); el.id = 'czbar'; el.className = 'czbar'; el.setAttribute('aria-live', 'polite');
+  el.innerHTML = `<span class="czbar__lbl">Cloze it</span><span class="czbar__track"><i style="--p:0"></i></span><span class="czbar__n" data-czn>0 / ${n}</span><span class="czbar__acts"><button type="button" class="czbar__btn" data-czall>Reveal all</button><button type="button" class="czbar__btn" data-czhide disabled>Hide all</button></span>`;
+  anchor.insertAdjacentElement('afterend', el);
+}
+function clozeCount() {
+  const all = $$('#main .cz'), shown = all.filter(b => b.dataset.state === 'revealed').length;
+  const n = $('[data-czn]'); if (!n) return;
+  n.textContent = `${shown} / ${all.length}`;
+  $('#czbar i').style.setProperty('--p', all.length ? shown / all.length : 0);
+  $('[data-czhide]').disabled = !shown; $('[data-czall]').disabled = shown === all.length;
+}
+function clozeSet(b, on) {
+  b.dataset.state = on ? 'revealed' : 'hidden'; b.setAttribute('aria-pressed', String(on));
+  b.setAttribute('aria-label', on ? `${b.textContent} (${b.dataset.type}). Press to hide again.` : `Hidden ${b.dataset.type}. Press to reveal.`);
+}
+// "Peek": press and hold a blank to lift the cover a little; drag sideways to peel it further.
+// Let go and it falls back — unless you peeled it almost all the way, then the word stays revealed.
+const czPeek = {el: null, x0: 0, y0: 0, w: 1, timer: 0, on: false, swallow: false};
+function czPeekSet(el, p) { el.style.setProperty('--pk', Math.max(0, Math.min(1, p)).toFixed(3)); }
+function czPeekEnd(keep) {
+  const P = czPeek, el = P.el; clearTimeout(P.timer); P.el = null;
+  if (!el || !P.on) return;
+  P.on = false; P.swallow = true; setTimeout(() => { P.swallow = false; }, 400);   // the click that follows a peek is not a tap
+  const pk = parseFloat(el.style.getPropertyValue('--pk')) || 0;
+  el.classList.remove('peeking');
+  if (keep && pk >= 0.8) { clozeSet(el, true); clozeCount(); }
+  el.style.removeProperty('--pk');
+}
+document.addEventListener('pointerdown', ev => {
+  const el = ev.target.closest('#main .cz[data-state="hidden"]'); if (!el || ev.button > 0) return;
+  const P = czPeek; P.el = el; P.x0 = ev.clientX; P.y0 = ev.clientY; P.w = Math.max(40, el.getBoundingClientRect().width); P.on = false;
+  P.timer = setTimeout(() => { if (P.el !== el) return; P.on = true; el.classList.add('peeking'); czPeekSet(el, .38); try { navigator.vibrate && navigator.vibrate(8); } catch (e) {} }, 220);
+});
+document.addEventListener('pointermove', ev => {
+  const P = czPeek, el = P.el; if (!el) return;
+  const dx = ev.clientX - P.x0, dy = ev.clientY - P.y0;
+  if (!P.on) {
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { clearTimeout(P.timer); P.el = null; return; }   // the user is scrolling
+    if (dx > 6) { clearTimeout(P.timer); P.on = true; el.classList.add('peeking'); }
+    else return;
+  }
+  czPeekSet(el, Math.max(.38 * (dx < 6 ? 1 : 0), dx / P.w));
+});
+document.addEventListener('pointerup', () => czPeekEnd(true));
+document.addEventListener('pointercancel', () => czPeekEnd(false));
+document.addEventListener('contextmenu', ev => { if (ev.target.closest('#main .cz')) ev.preventDefault(); });
+document.addEventListener('click', ev => {
+  const t = ev.target;
+  if (t.closest('#czsw')) { clozeOn = !clozeOn; LS.set('cloze', clozeOn); clozeSwitch(); const y = window.scrollY; render(); window.scrollTo(0, y); toast(clozeOn ? 'Cloze it on — tap a blank to reveal it' : 'Cloze it off'); return; }
+  const b = t.closest('#main .cz');
+  if (b) { ev.preventDefault(); if (czPeek.swallow) { czPeek.swallow = false; return; } clozeSet(b, b.dataset.state !== 'revealed'); clozeCount(); return; }
+  if (t.closest('[data-czall]')) { $$('#main .cz').forEach(x => clozeSet(x, true)); clozeCount(); return; }
+  if (t.closest('[data-czhide]')) { $$('#main .cz').forEach(x => clozeSet(x, false)); clozeCount(); }
+});
 boot();
 })();
