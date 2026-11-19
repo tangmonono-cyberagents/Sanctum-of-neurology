@@ -30,7 +30,7 @@
       <a href="#/" data-v="home" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span>Search</span></a>
       <a href="#/browse/sys" data-v="browse"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg><span>Browse</span></a>
       <a href="#/compare" data-v="compare"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M17 4v16M4 8h6M14 16h6"/></svg><span>Compare</span><i class="n"></i></a>
-      <a href="#/quiz" data-v="quiz"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="13" height="15" rx="2"/><path d="M8 3h11a1 1 0 0 1 1 1v13"/><path d="M8.5 10.5a2 2 0 1 1 2.6 1.9c-.6.2-.6.7-.6 1.1M10.5 16.5v.01"/></svg><span>Quiz</span></a>
+      <a href="#/train" data-v="quiz"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="13" height="15" rx="2"/><path d="M8 3h11a1 1 0 0 1 1 1v13"/><path d="M8.5 10.5a2 2 0 1 1 2.6 1.9c-.6.2-.6.7-.6 1.1M10.5 16.5v.01"/></svg><span>Train</span></a>
       <a href="#/saved" data-v="saved"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16l-6-4-6 4z"/></svg><span>Saved</span><i class="n"></i></a>
     </nav>
     <a class="gushbtn" href="#/gush" data-v="gush" title="Gush! — swipe flash cards" aria-label="Gush! flash cards"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3.5" width="12" height="15" rx="2.2"/><path d="M4 7.5v11a2.5 2.5 0 0 0 2.5 2.5H15"/><path d="M12.6 7.2l-2.4 4h3.2l-2.4 4"/></svg><span>Gush!</span></a>
@@ -39,7 +39,34 @@
   </div>
 </header>
 <div class="wrap"><div id="banner" class="banner" hidden></div></div>
-<main id="main" class="wrap"><p class="muted loading">Loading lexicon…</p></main>
+<main id="main" class="wrap"></main>
+<div id="lx" class="lx" role="progressbar" aria-label="Loading lexicon" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+<div class="lx__box">
+<svg class="lx__brain" viewBox="0 0 200 160" aria-hidden="true">
+<defs><clipPath id="lxclip"><path d="M52 118C30 118 18 102 22 86C10 78 12 58 28 52C26 34 44 22 62 28C70 14 92 10 104 20C116 10 140 12 148 26C166 24 182 40 176 58C190 68 188 90 174 98C176 114 160 124 144 120C136 132 116 134 106 124C96 134 74 134 66 122C61 122 56 121 52 118Z"/></clipPath>
+<linearGradient id="lxg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="lx__s1"/><stop offset="1" class="lx__s2"/></linearGradient></defs>
+<path class="lx__glass" d="M52 118C30 118 18 102 22 86C10 78 12 58 28 52C26 34 44 22 62 28C70 14 92 10 104 20C116 10 140 12 148 26C166 24 182 40 176 58C190 68 188 90 174 98C176 114 160 124 144 120C136 132 116 134 106 124C96 134 74 134 66 122C61 122 56 121 52 118Z"/>
+<g clip-path="url(#lxclip)"><g id="lxlvl" class="lx__lvl" style="transform:translateY(148px)">
+<path class="lx__w2" d="M-200 0q25 -7 50 0t50 0q25 -7 50 0t50 0q25 -7 50 0t50 0q25 -7 50 0t50 0q25 -7 50 0t50 0q25 -7 50 0t50 0V200H-200Z"/><path class="lx__w1" d="M-200 0q25 -7 50 0t50 0q25 -7 50 0t50 0q25 -7 50 0t50 0q25 -7 50 0t50 0q25 -7 50 0t50 0q25 -7 50 0t50 0V200H-200Z" fill="url(#lxg)"/>
+<circle class="lx__bb" cx="70" cy="40" r="3"/><circle class="lx__bb lx__bb2" cx="118" cy="52" r="2.2"/><circle class="lx__bb lx__bb3" cx="150" cy="44" r="2.6"/><circle class="lx__bb lx__bb4" cx="92" cy="60" r="1.8"/>
+</g></g>
+<path class="lx__gyri" d="M62 28C66 40 60 50 50 54M104 20C100 32 106 42 118 44M148 26C140 36 146 48 158 52M28 52C40 58 44 68 40 78M176 58C166 64 164 76 172 84M106 124C104 112 112 106 124 106M66 122C70 110 64 102 54 100M84 34C90 42 86 50 92 58"/>
+<path class="lx__edge" d="M52 118C30 118 18 102 22 86C10 78 12 58 28 52C26 34 44 22 62 28C70 14 92 10 104 20C116 10 140 12 148 26C166 24 182 40 176 58C190 68 188 90 174 98C176 114 160 124 144 120C136 132 116 134 106 124C96 134 74 134 66 122C61 122 56 121 52 118Z"/>
+<g class="lx__face"><ellipse class="lx__blush" cx="72" cy="96" rx="7" ry="3.8"/><ellipse class="lx__blush" cx="132" cy="96" rx="7" ry="3.8"/>
+<g class="lx__eyes"><ellipse cx="84" cy="86" rx="4.6" ry="5.4"/><ellipse cx="120" cy="86" rx="4.6" ry="5.4"/></g>
+<circle class="lx__shine" cx="85.8" cy="84" r="1.5"/><circle class="lx__shine" cx="121.8" cy="84" r="1.5"/>
+<path class="lx__smile" d="M94 97Q102 104 110 97"/></g>
+</svg>
+<p class="lx__txt"><span id="lxmsg">Filling the brain…</span> <b id="lxpct">0%</b></p>
+<p class="lx__sub">Loading the lexicon</p>
+</div></div>
+<script>(function(){var el=document.getElementById('lx');if(!el)return;var lv=document.getElementById('lxlvl'),pc=document.getElementById('lxpct'),real=0,tr=0,shown=-1,dead=false;
+function draw(){var p=Math.max(real,tr);if(p===shown)return;shown=p;lv.style.transform='translateY('+(148-p*138).toFixed(1)+'px)';var n=Math.round(p*100);pc.textContent=n+'%';el.setAttribute('aria-valuenow',n);}
+var t=setInterval(function(){tr+=(0.88-tr)*0.03;draw();},120);
+window.__lx={set:function(f){if(!dead&&f>real){real=Math.min(1,f);draw();}},
+done:function(){if(dead)return;dead=true;clearInterval(t);real=1;draw();var m=el.querySelector('#lxmsg');if(m)m.textContent='Ready!';document.body.appendChild(el);el.style.pointerEvents='none';el.classList.add('lx--fin');
+setTimeout(function(){el.classList.add('lx--out');setTimeout(function(){el.remove();},320);},220);},
+fail:function(){dead=true;clearInterval(t);el.remove();}};draw();})();</script>
 <script src="app.js"></script>
 </body>
 </html>
